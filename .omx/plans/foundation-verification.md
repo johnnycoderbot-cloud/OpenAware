@@ -13,19 +13,20 @@ Date: 2026-10-02. This record distinguishes the current documentation/repository
 | Cross-document defaults | Read product/contracts/architecture/roadmap/testing and check source scheduling, freshness, model identity, retention, and effects boundaries | Passed: Product Manager and Software Architect final read-only reviews approved; alert reset, motion-only startup, freshness, switching, Bionic grants, storage, and dependencies aligned. |
 | Application status truthfulness | README/PLAN/product/roadmap/testing show planning-only state; no native/live/app result claimed | Passed coordinator review: runnable app explicitly absent; future native/provider tests clearly not run. |
 | License/public/private-data hygiene | MIT LICENSE, public metadata, scan tracked diff for secrets/private data, review generated concept visual | Passed local review: MIT present, image synthetic and labeled, no detected credential patterns or personal-machine paths in public text; local OMX sessions/state excluded. |
-| Public GitHub publication | Verify remote URL/default branch/head, visibility/license, pushed files, issues/links | Coordinator must record remote evidence; not performed by delivery planner. |
+| Public GitHub publication | Verify remote URL/default branch/head, visibility/license, pushed files, issues/links | Passed coordinator verification: public MIT repository on main; initial local/remote head match; 32 tracked files; 26 open slice issues with matching bodies and linked dependencies; 7 milestones with no committed dates; private vulnerability reporting enabled. |
+| Remote planning CI | Inspect both matrix jobs for initial published commit | Passed Windows and Ubuntu on `4f5f474a706b9e00897add99e651c30d5f6c7f7f`: [Actions evidence](https://github.com/johnnycoderbot-cloud/OpenAware/actions/runs/37071383100). This is documentation/dependency validation, not application acceptance. |
 
-## Evidence required before current completion
+## Completed foundation evidence
 
 Local structural validator ran on 2026-10-02 in the planning repository using Python standard-library JSON/regex/path checks and exited 0. Result: status pass; 26 slices (18 initial/8 later); 40 requirements; acyclic dependencies; four Markdown documents; 47 relative links/anchors.
 
 After cross-review corrections, the repository validator `python scripts/validate_plan.py` exited 0 on 2026-10-02: “PASS: 25 Markdown files, required artifacts, local links/anchors, 26 slices, acyclic dependencies, and requirement coverage.” It explicitly does not test runtime capture, providers, Bionic compatibility, or performance. This broader check covers other contributors' current artifacts in addition to the delivery-owned files.
 
-1. All canonical documents exist and link correctly.
-2. Local structural validation passes with exact requirement/slice counts.
-3. Cross-document review resolves any findings; rejected/deferred capabilities have clear outcomes.
-4. Initial public repository commit/push and GitHub issues are remotely verified.
-5. Reviewer/coordinator records the accepted handoff and updates runtime task/review state.
+1. All canonical documents exist and link correctly: passed.
+2. Local structural validation passes with exact requirement/slice counts: passed, 26 slices and 40 requirements.
+3. Cross-document review resolves findings: approved by both final reviewers; unverified capabilities have gates/fallbacks.
+4. Initial public repository commit/push and GitHub issues are remotely verified: passed.
+5. Coordinator accepts the planning handoff and closes local task/review state upon final push verification. Future implementation issues remain open.
 
 ## Future application verification map
 
