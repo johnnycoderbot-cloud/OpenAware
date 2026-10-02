@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "status": "planned",
-  "scope": "Planning-only repository; initial execution slices plus gated later backlog; no application implementation exists yet",
+  "scope": "Target roadmap and gated backlog; working prototypes and their verification are recorded separately in implementation ledgers; slice acceptance gates remain planned",
   "date": "2026-10-02",
   "estimation_basis": "OA-001..018 aggregate 68-136 first-pass work-unit hours only, NOT a validated alpha completion estimate. Each unit assumes 30-60 minutes with prepared environment; review, rework, unsupported vendor/hardware, security validation and packaging/signing gate waits are additional and may dominate elapsed effort. OA-019..026 estimates remain TBD after separate capability/authorization spikes and are excluded.",
   "slices": [

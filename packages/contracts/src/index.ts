@@ -246,6 +246,12 @@ export const commandSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("history.clear") }).strict(),
 ]);
 export type Command = z.infer<typeof commandSchema>;
+export interface DesktopState {
+  backgroundMode: boolean;
+  windowVisible: boolean;
+  trayAvailable: boolean;
+  launchMode: "window" | "background";
+}
 export interface OpenAwareBridge {
   invoke<T = Snapshot>(command: Command): Promise<T>;
   onState(callback: (state: Snapshot) => void): () => void;
@@ -253,9 +259,13 @@ export interface OpenAwareBridge {
   selectDesktopSource(id: string): Promise<void>;
   executePlan(planId: string): Promise<ActionResult[]>;
   stopAll(): Promise<void>;
+  getDesktopState(): Promise<DesktopState>;
+  setBackgroundMode(enabled: boolean): Promise<DesktopState>;
+  onDesktopState(callback: (state: DesktopState) => void): () => void;
+  quit(): Promise<void>;
 }
 export const initialSnapshot = (): Snapshot => ({
-  version: "0.1.0",
+  version: "0.2.0",
   session: "idle",
   epoch: 1,
   sources: [],

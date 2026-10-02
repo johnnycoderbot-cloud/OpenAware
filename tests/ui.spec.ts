@@ -28,7 +28,8 @@ test("motion-only watching is explicit and Stop all remains keyboard accessible"
   let app: ElectronApplication | undefined;
   try {
     app = await electron.launch({
-      args: ["."],
+      executablePath: process.env.OPENAWARE_EXECUTABLE,
+      args: process.env.OPENAWARE_EXECUTABLE ? [] : ["."],
       cwd: resolve("."),
       env: environment(),
     });
@@ -146,7 +147,8 @@ test("connection forms verify a synthetic image and chat uses only selected mask
     if (!address || typeof address === "string")
       throw new Error("Missing test server address");
     app = await electron.launch({
-      args: ["."],
+      executablePath: process.env.OPENAWARE_EXECUTABLE,
+      args: process.env.OPENAWARE_EXECUTABLE ? [] : ["."],
       cwd: resolve("."),
       env: environment(),
     });

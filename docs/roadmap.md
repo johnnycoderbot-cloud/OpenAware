@@ -1,6 +1,6 @@
 # OpenAware delivery roadmap
 
-Status: proposed execution plan, 2026-10-02. The repository currently contains planning artifacts, not a working application. Public repository and MIT licensing are authorized; connecting feeds, credentials, live brokerage accounts, or computer-action execution are outside this foundation task.
+Status: full target roadmap, baseline 2026-10-02. The repository now includes a [working developer prototype](prototype.md). Application construction and public MIT delivery were subsequently authorized; real integrations and production release gates still require their own acceptance evidence.
 
 ## Scope and estimates
 
@@ -62,9 +62,9 @@ The machine-readable [slice manifest](../.omx/plans/implementation-slices.json) 
 
 ## Execution slices
 
-Issue IDs are stable. Target paths are proposed implementation locations, not files claimed to exist in this planning-only repository. Runnable service code belongs in `apps/service`; shared logic belongs under the architecture's `packages/core`, `capture`, `providers`, `storage`, `mcp`, `actions`, and `contracts` modules.
+Issue IDs are stable. Target paths describe the full roadmap; [prototype status](prototype.md) identifies the currently implemented subset. Runnable service code belongs in `apps/service`; shared logic belongs under the architecture's `packages/core`, `capture`, `providers`, `storage`, `mcp`, `actions`, and `contracts` modules.
 
-Each slice ends with a reviewable handoff: changed files, requirement IDs, acceptance results, commands/manual steps, redacted evidence, unresolved limitations, and a gate decision (pass, defer, or changes required). Later-slice implementation waits for its explicit gate; current authorization covers planning and public repository creation. OA-010 is optional for standalone alpha: alerts, chat, release, and the future action grant broker do not depend on Bionic.
+Each slice ends with a reviewable handoff: changed files, requirement IDs, acceptance results, commands/manual steps, redacted evidence, unresolved limitations, and a gate decision (pass, defer, or changes required). Later integrations wait for their explicit gate; the [prototype ledgers](../.omx/logs/execution-ledger.md) record subsequent application authorization and evidence. OA-010 is optional for standalone alpha: alerts, chat, release, and the future action grant broker do not depend on Bionic.
 
 | ID | Slice | Phase | Dependencies | Effort assumption |
 | --- | --- | --- | --- | --- |

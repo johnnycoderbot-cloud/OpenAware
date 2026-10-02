@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type {
   OpenAwareBridge,
+  DesktopState,
   Snapshot,
 } from "../../../packages/contracts/src/index";
 
@@ -33,5 +34,20 @@ const bridge: OpenAwareBridge = {
     ipcRenderer.invoke("openaware:select-desktop", id),
   executePlan: (planId) => ipcRenderer.invoke("openaware:execute-plan", planId),
   stopAll: () => ipcRenderer.invoke("openaware:stop"),
+  getDesktopState: () => ipcRenderer.invoke("openaware:desktop-state"),
+  setBackgroundMode: (enabled) =>
+    ipcRenderer.invoke("openaware:background-mode", enabled),
+  onDesktopState: (callback) => {
+    if (typeof callback !== "function")
+      throw new Error("Desktop state callback must be a function");
+    const listener = (
+      _event: Electron.IpcRendererEvent,
+      state: DesktopState,
+    ): void => callback(state);
+    ipcRenderer.on("openaware:desktop-state", listener);
+    return () =>
+      ipcRenderer.removeListener("openaware:desktop-state", listener);
+  },
+  quit: () => ipcRenderer.invoke("openaware:quit"),
 };
 contextBridge.exposeInMainWorld("openAware", bridge);

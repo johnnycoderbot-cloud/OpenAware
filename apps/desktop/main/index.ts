@@ -21,6 +21,7 @@ import {
   type AutomationPlan,
   type AutomationStep,
   type CaptureChoice,
+  type DesktopState,
   type Snapshot,
 } from "../../../packages/contracts/src/index";
 import {
@@ -36,12 +37,21 @@ import {
 } from "../../../packages/actions/src/windows";
 import { ServiceClient } from "./service-client";
 import { DisplayCaptureGrant } from "./capture-grant";
+import { DesktopBackgroundController, launchModeFromArgs } from "./background";
 
 const rendererPath = join(__dirname, "renderer", "index.html");
 const rendererUrl = pathToFileURL(rendererPath).href;
+const launchMode = launchModeFromArgs(process.argv);
+// Our --headless alias means an interactive tray session, not Chromium's
+// headless browser. Remove the Chromium switch before ready so Tray Show can
+// create a visible native window later. process.argv retains our launch intent.
+if (process.argv.includes("--headless"))
+  app.commandLine.removeSwitch("headless");
 const testMode = process.env.OPENAWARE_TEST === "1";
 let window: BrowserWindow | undefined;
 let tray: Tray | undefined;
+let trayMenuMode: boolean | undefined;
+let trayTooltip = "";
 let state = initialSnapshot();
 const captureGrant = new DisplayCaptureGrant(!testMode);
 const selectedDevices = new Set<string>();
@@ -50,7 +60,6 @@ const listedDesktopDevices = new Map<
   { kind: "monitor" | "window"; expiresAt: number }
 >();
 let captureGeneration = 0;
-let quitting = false;
 const cameraDialogs = new Set<AbortController>();
 
 function trustedUrl(url: string): boolean {
@@ -81,6 +90,7 @@ function broadcast(next: Snapshot): void {
   state = next;
   if (window && !window.isDestroyed())
     window.webContents.send("openaware:state", next);
+  updateTray();
 }
 const service = new ServiceClient(broadcast, (message) => {
   broker.revoke();
@@ -102,7 +112,69 @@ const service = new ServiceClient(broadcast, (message) => {
   });
   if (window && !window.isDestroyed())
     window.webContents.send("openaware:stop");
+  desktop.serviceFailed();
 });
+const desktop = new DesktopBackgroundController(
+  {
+    showWindow: () => {
+      if (!window || window.isDestroyed()) return;
+      if (window.isMinimized()) window.restore();
+      window.show();
+      window.focus();
+    },
+    hideWindow: () => window?.hide(),
+    getWindowVisibility: () =>
+      !!window &&
+      !window.isDestroyed() &&
+      window.isVisible() &&
+      !window.isMinimized(),
+    stop: stopImmediately,
+    closeService: () => service.close(),
+    destroyTray: () => {
+      globalShortcut.unregisterAll();
+      tray?.destroy();
+      tray = undefined;
+    },
+    quitApp: () => app.quit(),
+    onState: (next: DesktopState) => {
+      if (window && !window.isDestroyed())
+        window.webContents.send("openaware:desktop-state", next);
+      updateTray();
+    },
+    onCleanupError: () => console.error("OpenAware shutdown cleanup failed"),
+  },
+  launchMode,
+  testMode,
+);
+
+function updateTray(): void {
+  if (!tray || tray.isDestroyed()) return;
+  const current = desktop.snapshot();
+  const active = state.sources.some((source) => source.status === "live");
+  const tooltip = `OpenAware — ${active ? "capture active" : state.session === "stopped" ? "stopped" : "idle"} — Ctrl+Shift+F12 stops all`;
+  if (tooltip !== trayTooltip) {
+    tray.setToolTip(tooltip);
+    trayTooltip = tooltip;
+  }
+  // Frame/motion broadcasts can be frequent. Rebuild the native menu only when
+  // its one mutable preference changes, so an open tray menu remains stable.
+  if (trayMenuMode === current.backgroundMode) return;
+  trayMenuMode = current.backgroundMode;
+  tray.setContextMenu(
+    Menu.buildFromTemplate([
+      { label: "Show OpenAware", click: () => desktop.show() },
+      {
+        label: "Keep running in background",
+        type: "checkbox",
+        checked: current.backgroundMode,
+        click: (item) => desktop.setBackgroundMode(item.checked),
+      },
+      { label: "Stop all capture and actions", click: stopImmediately },
+      { type: "separator" },
+      { label: "Quit", click: () => desktop.quit() },
+    ]),
+  );
+}
 function stopImmediately(): void {
   broker.revoke();
   captureGrant.revoke();
@@ -293,6 +365,19 @@ const broker = new ActionBroker({
 });
 
 function registerIpc(): void {
+  ipcMain.handle("openaware:desktop-state", (event) => {
+    assertSender(event);
+    return desktop.snapshot();
+  });
+  ipcMain.handle("openaware:background-mode", (event, enabled: unknown) => {
+    assertSender(event);
+    return desktop.setBackgroundMode(enabled);
+  });
+  ipcMain.handle("openaware:quit", (event) => {
+    assertSender(event);
+    // Return the acknowledgement before Electron closes this renderer.
+    setImmediate(() => desktop.quit());
+  });
   ipcMain.handle("openaware:invoke", async (event, raw: unknown) => {
     assertSender(event);
     const command = commandSchema.parse(raw);
@@ -390,6 +475,8 @@ function registerIpc(): void {
       authoritative.pendingPlan,
     ) as AutomationPlan;
     const reviewingWindow = window;
+    const wasVisible =
+      !!reviewingWindow?.isVisible() && !reviewingWindow.isMinimized();
     reviewingWindow?.minimize();
     try {
       // Take inspection only after the workspace is exposed. Never reuse evidence from before minimize.
@@ -398,11 +485,8 @@ function registerIpc(): void {
       await service.request({ type: "automation.cancel" }).catch(() => {});
       return results;
     } finally {
-      if (reviewingWindow && !reviewingWindow.isDestroyed() && !quitting) {
-        reviewingWindow.restore();
-        reviewingWindow.show();
-        reviewingWindow.focus();
-      }
+      if (reviewingWindow && !reviewingWindow.isDestroyed())
+        desktop.restoreAfterReview(wasVisible);
     }
   });
   ipcMain.handle("openaware:stop", (event) => {
@@ -576,7 +660,21 @@ app
       event.preventDefault(),
     );
     window.webContents.on("render-process-gone", () => stopImmediately());
+    window.on("show", () =>
+      desktop.windowVisibilityChanged(!window?.isMinimized()),
+    );
+    window.on("hide", () => desktop.windowVisibilityChanged(false));
+    window.on("minimize", () => desktop.windowVisibilityChanged(false));
+    window.on("restore", () =>
+      desktop.windowVisibilityChanged(!!window?.isVisible()),
+    );
+    window.on("close", (event) => {
+      if (desktop.isQuitting()) return;
+      event.preventDefault();
+      desktop.closeRequested();
+    });
     window.on("closed", () => {
+      desktop.windowVisibilityChanged(false);
       window = undefined;
       app.quit();
     });
@@ -594,7 +692,11 @@ app
               click: stopImmediately,
             },
             { type: "separator" },
-            { role: "quit" },
+            {
+              label: "Quit",
+              accelerator: "CommandOrControl+Q",
+              click: () => desktop.quit(),
+            },
           ],
         },
         {
@@ -625,16 +727,20 @@ app
         )
       : icon;
     if (!testMode) {
-      tray = new Tray(trayIcon);
-      tray.setToolTip("OpenAware — Ctrl+Shift+F12 stops all");
-      tray.setContextMenu(
-        Menu.buildFromTemplate([
-          { label: "Show OpenAware", click: () => window?.show() },
-          { label: "Stop all capture and actions", click: stopImmediately },
-          { label: "Quit", click: () => app.quit() },
-        ]),
-      );
-      tray.on("double-click", () => window?.show());
+      try {
+        tray = new Tray(trayIcon);
+        tray.on("double-click", () => desktop.show());
+        desktop.setTrayAvailable(true);
+      } catch {
+        tray?.destroy();
+        tray = undefined;
+        desktop.setTrayAvailable(false);
+        broadcast({
+          ...state,
+          lastError:
+            "System tray unavailable. The dashboard will remain visible; background mode is disabled.",
+        });
+      }
       if (
         !globalShortcut.register("CommandOrControl+Shift+F12", stopImmediately)
       )
@@ -648,7 +754,8 @@ app
     screen.on("display-removed", () => broker.revoke());
     screen.on("display-metrics-changed", () => broker.revoke());
     await window.loadFile(rendererPath);
-    if (!testMode) window.show();
+    const backgroundStarted = desktop.launch();
+    if (!testMode && !backgroundStarted) desktop.show();
   })
   .catch((error) => {
     console.error(
@@ -658,11 +765,6 @@ app
     app.quit();
   });
 app.on("before-quit", () => {
-  if (quitting) return;
-  quitting = true;
-  stopImmediately();
-  service.close();
-  globalShortcut.unregisterAll();
-  tray?.destroy();
+  desktop.beginQuit();
 });
 app.on("window-all-closed", () => app.quit());

@@ -197,7 +197,7 @@ test("desktop runs synthetic preview, scopes local vision, stops acquisition, an
     expect(rejection).toBe(true);
     await page.screenshot({
       path: resolve("assets/prototype-desktop.png"),
-      fullPage: true,
+      fullPage: false,
     });
     await page.getByTestId("stop-all").click();
     await expect

@@ -19,3 +19,5 @@ Date: 2026-10-02. This ledger tracks the authorized planning/repository task, no
 No application, real feed, API key, trade, or computer action has been executed as part of the plan. No detached OMX team workers are claimed; native subagents performed in-session planning.
 
 Subsequent authorization to build the application is tracked in the [v0.1 implementation ledger](implementation-v0.1.md). The planning-only statement above describes the earlier foundation task.
+
+The owner's concept-fidelity and tray-background follow-up is tracked in the [v0.2 implementation ledger](implementation-v0.2.md).

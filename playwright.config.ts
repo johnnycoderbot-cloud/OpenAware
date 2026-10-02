@@ -1,7 +1,13 @@
 import { defineConfig } from "@playwright/test";
 export default defineConfig({
   testDir: "./tests",
-  testMatch: ["desktop.spec.ts", "ui.spec.ts"],
+  testMatch: [
+    "desktop.spec.ts",
+    "ui.spec.ts",
+    "background.spec.ts",
+    "tray.spec.ts",
+    "visual.spec.ts",
+  ],
   workers: 1,
   timeout: 45_000,
   reporter: "list",

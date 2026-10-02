@@ -182,6 +182,20 @@ function harness(motionEnabled = false) {
     selectDesktopSource: async () => {},
     executePlan: async () => [],
     stopAll: async () => {},
+    getDesktopState: async () => ({
+      backgroundMode: false,
+      windowVisible: true,
+      trayAvailable: false,
+      launchMode: "window",
+    }),
+    setBackgroundMode: async (enabled) => ({
+      backgroundMode: enabled,
+      windowVisible: !enabled,
+      trayAvailable: false,
+      launchMode: "window",
+    }),
+    onDesktopState: () => () => {},
+    quit: async () => {},
   };
   const manager = new CaptureManager(
     bridge,

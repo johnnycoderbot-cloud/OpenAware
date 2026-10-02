@@ -14,10 +14,12 @@ import {
   Layers3,
   LockKeyhole,
   Monitor,
+  Minimize2,
   MousePointer2,
   Pause,
   Play,
   Plus,
+  Power,
   Radio,
   RefreshCw,
   Send,
@@ -33,6 +35,7 @@ import {
   initialSnapshot,
   type CaptureChoice,
   type Command,
+  type DesktopState,
   type Frame,
   type Mask,
   type OpenAwareBridge,
@@ -72,6 +75,9 @@ export function App() {
   const [tab, setTab] = useState<Tab>("Overview");
   const [addOpen, setAddOpen] = useState(false);
   const [maskSource, setMaskSource] = useState<Source>();
+  const [focusedSourceId, setFocusedSourceId] = useState<string>();
+  const [desktopState, setDesktopState] = useState<DesktopState>();
+  const feedsRef = useRef<HTMLDivElement>(null);
   const [notice, setNotice] = useState<string>();
   const [pending, setPending] = useState<string[]>([]);
   const [, redraw] = useState(0);
@@ -116,6 +122,15 @@ export function App() {
     if (snapshot.session === "stopped") manager?.stopAll();
   }, [snapshot.session, manager]);
   useEffect(() => {
+    if (!bridge) return;
+    const unsubscribe = bridge.onDesktopState(setDesktopState);
+    void bridge
+      .getDesktopState()
+      .then(setDesktopState)
+      .catch((error) => report(String(error)));
+    return unsubscribe;
+  }, [bridge, report]);
+  useEffect(() => {
     if (!notice) return;
     const timer = setTimeout(() => setNotice(undefined), 8000);
     return () => clearTimeout(timer);
@@ -155,6 +170,10 @@ export function App() {
       setPending((p) => p.filter((item) => item !== "stop"));
     }
   }
+  function focusSource(sourceId: string) {
+    setFocusedSourceId(sourceId);
+    feedsRef.current?.scrollTo({ top: 0, behavior: "auto" });
+  }
   async function addSource(name: string, kind: SourceKind, deviceId: string) {
     const id = crypto.randomUUID();
     const result = await run({
@@ -163,6 +182,7 @@ export function App() {
     });
     const source = result?.sources.find((s) => s.id === id);
     if (!source || !manager) return;
+    if (kind !== "camera" && kind !== "virtual_camera") focusSource(id);
     setAddOpen(false);
     setPending((p) => [...p, id]);
     try {
@@ -199,6 +219,15 @@ export function App() {
   const live = snapshot.sources.filter((source) => source.status === "live");
   const recent = snapshot.observations[snapshot.observations.length - 1];
   const sessionActive = snapshot.session === "monitoring";
+  const screenSources = snapshot.sources.filter(
+    (source) => source.kind !== "camera" && source.kind !== "virtual_camera",
+  );
+  const cameraSources = snapshot.sources.filter(
+    (source) => source.kind === "camera" || source.kind === "virtual_camera",
+  );
+  const primarySource =
+    screenSources.find((source) => source.id === focusedSourceId) ||
+    screenSources[0];
   const canStart =
     live.some((s) => s.motionEnabled || s.analysisEnabled) &&
     (!live.some((s) => s.analysisEnabled) ||
@@ -210,9 +239,39 @@ export function App() {
     "Event log": "A clear record of what happened.",
   };
 
+  const renderSource = (
+    source: Source,
+    presentation: "primary" | "thumbnail" | "camera",
+  ) => (
+    <SourceTile
+      key={source.id}
+      source={source}
+      presentation={presentation}
+      onFocus={
+        presentation === "thumbnail" ? () => focusSource(source.id) : undefined
+      }
+      info={manager?.info(source.id)}
+      pending={pending.includes(source.id)}
+      observation={snapshot.observations
+        .filter((o) => o.sourceIds.includes(source.id))
+        .at(-1)}
+      onConnect={() => void connect(source)}
+      onDisconnect={() => void disconnect(source)}
+      onRemove={() => void remove(source)}
+      onMasks={() => setMaskSource(source)}
+      onToggle={(key, value) =>
+        void run({
+          type: "source.update",
+          sourceId: source.id,
+          patch: { [key]: value },
+        })
+      }
+    />
+  );
+
   return (
-    <div className="app-shell">
-      <aside className="sidebar" aria-label="Main navigation">
+    <div className={`app-shell ${tab === "Overview" ? "overview-shell" : ""}`}>
+      <header className="app-navigation">
         <a
           className="brand"
           href="#"
@@ -225,12 +284,10 @@ export function App() {
           <span className="brand-symbol">
             <Aperture size={25} />
           </span>
-          <span>
-            OpenAware<span className="brand-caption">THE AWARE WORKSPACE</span>
-          </span>
+          <span>OpenAware</span>
         </a>
-        <div className="workspace-label">WORKSPACE</div>
-        <nav>
+        <span className="opensource-badge">Open source</span>
+        <nav aria-label="Main navigation">
           {tabs.map((item) => (
             <button
               key={item.name}
@@ -252,95 +309,87 @@ export function App() {
             </button>
           ))}
         </nav>
-        <div className="sidebar-bottom">
-          <div className="local-card">
-            <ShieldCheck size={20} />
-            <strong>Local first</strong>
-            <p>
-              Frames and conversation stay in memory. You choose every source.
-            </p>
-            <span className="mini-label">NO CLOUD ROUTING</span>
-          </div>
-          <div className="sidebar-version">
-            <span className="tiny-dot" /> OpenAware{" "}
-            <span>v{snapshot.version}</span>
-          </div>
-        </div>
-      </aside>
-      <div className="workspace">
-        <header className="topbar">
-          <span className="breadcrumb">
-            Workspace <ChevronRight size={14} /> <strong>{tab}</strong>
+        <div className="topbar-right">
+          <span className={`status-pill ${sessionActive ? "good" : "warning"}`}>
+            <span className="dot" />
+            {sessionActive
+              ? "Watching"
+              : snapshot.session === "paused"
+                ? "AI paused"
+                : "Standby"}
           </span>
-          <div className="topbar-right">
-            <span className={`status-pill ${bridge ? "good" : "warning"}`}>
-              <span className="dot" />
-              {bridge ? "Desktop connected" : "Desktop disconnected"}
-            </span>
-            <span className="memory-badge">
-              <LockKeyhole size={13} /> Memory only
-            </span>
-            <button
-              data-testid="stop-all"
-              className="button stop"
-              disabled={
-                !bridge ||
-                (live.length === 0 &&
-                  snapshot.session !== "monitoring" &&
-                  !snapshot.busy &&
-                  !snapshot.sources.some((s) => manager?.has(s.id))) ||
-                pending.includes("stop")
+          <span className="memory-badge">
+            <LockKeyhole size={14} /> Local · Memory only
+          </span>
+          <button
+            className="button secondary background-button"
+            disabled={
+              !bridge || !desktopState || pending.includes("background")
+            }
+            title={
+              desktopState?.backgroundMode
+                ? "Leave background mode. Closing the window will quit OpenAware."
+                : "Hide the dashboard and keep this session running in the system tray. Tray controls can show, stop, or quit it."
+            }
+            onClick={async () => {
+              if (!bridge || !desktopState) return;
+              setPending((items) => [...items, "background"]);
+              try {
+                setDesktopState(
+                  await bridge.setBackgroundMode(!desktopState.backgroundMode),
+                );
+              } catch (error) {
+                report(error instanceof Error ? error.message : String(error));
+              } finally {
+                setPending((items) =>
+                  items.filter((item) => item !== "background"),
+                );
               }
-              onClick={() => void stopAll()}
-            >
-              <Square size={13} />
-              Stop all
-            </button>
-          </div>
-        </header>
-        <main>
-          <div className="page-heading">
-            <div>
-              <span className="eyebrow">OPENAWARE / {tab.toUpperCase()}</span>
-              <h1>{tab === "Overview" ? "Live workspace" : tab}</h1>
-              <p>{subtitle[tab]}</p>
+            }}
+          >
+            <Minimize2 size={15} />
+            {desktopState?.backgroundMode ? "Window mode" : "Background"}
+          </button>
+          <button
+            data-testid="stop-all"
+            className="button stop"
+            disabled={
+              !bridge ||
+              (live.length === 0 &&
+                snapshot.session !== "monitoring" &&
+                !snapshot.busy &&
+                !snapshot.sources.some((s) => manager?.has(s.id))) ||
+              pending.includes("stop")
+            }
+            onClick={() => void stopAll()}
+          >
+            <Square size={13} />
+            Stop all
+          </button>
+          <button
+            className="icon-button quit-button"
+            aria-label="Quit OpenAware"
+            title="Stop the session and quit OpenAware"
+            disabled={!bridge}
+            onClick={() =>
+              void bridge?.quit().catch((error) => report(String(error)))
+            }
+          >
+            <Power size={19} />
+          </button>
+        </div>
+      </header>
+      <div className="workspace">
+        <main className={tab === "Overview" ? "overview-main" : ""}>
+          {tab !== "Overview" && (
+            <div className="page-heading">
+              <div>
+                <span className="eyebrow">OPENAWARE / {tab.toUpperCase()}</span>
+                <h1>{tab}</h1>
+                <p>{subtitle[tab]}</p>
+              </div>
             </div>
-            <div className="page-actions">
-              {tab === "Overview" && (
-                <>
-                  <button
-                    data-testid="add-source"
-                    className="button secondary"
-                    disabled={!bridge || snapshot.sources.length >= 4}
-                    onClick={() => setAddOpen(true)}
-                  >
-                    <Plus size={16} />
-                    Add source
-                  </button>
-                  <button
-                    className="button primary"
-                    disabled={
-                      !bridge ||
-                      (!sessionActive && !canStart) ||
-                      pending.includes("monitor.start")
-                    }
-                    onClick={() =>
-                      void run({
-                        type: sessionActive ? "monitor.pause" : "monitor.start",
-                      })
-                    }
-                  >
-                    {sessionActive ? <Pause size={15} /> : <Play size={15} />}
-                    {sessionActive
-                      ? "Pause AI"
-                      : snapshot.session === "paused"
-                        ? "Resume watching"
-                        : "Start watching"}
-                  </button>
-                </>
-              )}
-            </div>
-          </div>
+          )}
           {!bridge && (
             <div className="inline-notice">
               <Monitor size={18} />
@@ -371,176 +420,279 @@ export function App() {
           )}
           {tab === "Overview" && (
             <>
-              <div className="stats-grid">
-                <Stat
-                  icon={<Video size={19} />}
-                  label="Connected sources"
-                  value={`${live.length}`}
-                  detail={`${snapshot.sources.length} of 4 source slots`}
-                />
-                <Stat
-                  icon={<Eye size={19} />}
-                  label="Observer"
-                  value={
-                    sessionActive
-                      ? "Watching"
-                      : snapshot.session === "paused"
-                        ? "Paused"
-                        : "Standby"
+              <div className="session-strip" aria-label="Monitoring status">
+                <span>
+                  <Video size={15} />
+                  <strong>{live.length}</strong> live sources{" "}
+                  <span className="muted">/ 4 slots</span>
+                </span>
+                <button
+                  className="session-model"
+                  onClick={() => setTab("Connections")}
+                  title={
+                    snapshot.binding.modelId || "Connect a local vision model"
                   }
-                  detail={
-                    sessionActive
-                      ? "Latest frames · fair scheduling"
-                      : "Start watching when you are ready"
-                  }
-                />
-                <Stat
-                  icon={<Cpu size={19} />}
-                  label="Model connection"
-                  value={
-                    snapshot.binding.status === "verified"
+                >
+                  <Cpu size={15} />
+                  <span>
+                    {snapshot.binding.modelId || "Choose a local model"}
+                  </span>
+                  <span
+                    className={`connection-state ${snapshot.binding.status === "verified" ? "verified" : ""}`}
+                  >
+                    {snapshot.binding.status === "verified"
                       ? "Verified"
-                      : snapshot.binding.status === "unconfigured"
-                        ? "Not connected"
-                        : snapshot.binding.status
-                  }
-                  detail={
-                    snapshot.binding.modelId || "Connect LM Studio or Ollama"
-                  }
-                />
-                <Stat
-                  icon={<Clock3 size={19} />}
-                  label="Latest AI evidence"
-                  value={recent ? age(recent.capturedAt) : "No evidence"}
-                  detail={
-                    recent
-                      ? `${recent.durationMs} ms inference · ${recent.status}`
-                      : "No AI analysis has run"
-                  }
-                />
+                      : "Not verified"}
+                  </span>
+                  <ChevronRight size={13} />
+                </button>
+                <span className="session-evidence">
+                  <Clock3 size={15} />
+                  AI evidence: {recent ? age(recent.capturedAt) : "not sampled"}
+                </span>
               </div>
               <div className="overview-columns">
-                <div className="feeds-section">
-                  <div className="section-heading">
-                    <h2>
-                      Live sources{" "}
-                      <span className="count">{snapshot.sources.length}</span>
-                    </h2>
-                    <span className="muted small">
-                      Preview and AI run independently
-                    </span>
-                  </div>
-                  <div
-                    className={`source-grid ${snapshot.sources.length <= 1 ? "single" : ""}`}
+                <div
+                  className={`feeds-section ${cameraSources.length ? "has-cameras" : ""}`}
+                  ref={feedsRef}
+                >
+                  <section
+                    className="panel desktop-panel"
+                    aria-label="Live desktop sources"
                   >
-                    {snapshot.sources.map((source) => (
-                      <SourceTile
-                        key={source.id}
-                        source={source}
-                        info={manager?.info(source.id)}
-                        pending={pending.includes(source.id)}
-                        observation={snapshot.observations
-                          .filter((o) => o.sourceIds.includes(source.id))
-                          .at(-1)}
-                        onConnect={() => void connect(source)}
-                        onDisconnect={() => void disconnect(source)}
-                        onRemove={() => void remove(source)}
-                        onMasks={() => setMaskSource(source)}
-                        onToggle={(key, value) =>
-                          void run({
-                            type: "source.update",
-                            sourceId: source.id,
-                            patch: { [key]: value },
-                          })
-                        }
-                      />
-                    ))}
-                    {snapshot.sources.length < 4 && (
-                      <button
-                        className={`empty-source ${snapshot.sources.length === 0 ? "first" : ""}`}
-                        onClick={() => setAddOpen(true)}
-                        disabled={!bridge}
-                      >
-                        <span className="add-orbit">
-                          <Plus size={26} />
-                        </span>
-                        <strong>
-                          {snapshot.sources.length === 0
-                            ? "Bring your workspace into view"
-                            : "Add another source"}
-                        </strong>
-                        <span>
-                          {snapshot.sources.length === 0
-                            ? "Select a monitor, window, camera, or synthetic demo."
-                            : "Monitor · Window · Camera · Demo"}
-                        </span>
-                        <span className="empty-source-note">
-                          <ShieldCheck size={14} /> Nothing is captured until
-                          you choose a source
-                        </span>
-                      </button>
+                    <div className="feed-panel-heading">
+                      <Monitor size={23} />
+                      <div>
+                        <h1>Live workspace</h1>
+                        <p>Live desktop · Preview and AI run independently.</p>
+                      </div>
+                      {screenSources.length > 0 && (
+                        <select
+                          aria-label="Focused desktop source"
+                          value={primarySource?.id || ""}
+                          onChange={(e) => focusSource(e.target.value)}
+                        >
+                          {screenSources.map((source) => (
+                            <option key={source.id} value={source.id}>
+                              {source.name}
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                      <div className="page-actions">
+                        <button
+                          data-testid="add-source"
+                          className="button secondary"
+                          disabled={!bridge || snapshot.sources.length >= 4}
+                          onClick={() => setAddOpen(true)}
+                        >
+                          <Plus size={16} />
+                          Add source
+                        </button>
+                        <button
+                          className="button primary"
+                          disabled={
+                            !bridge ||
+                            (!sessionActive && !canStart) ||
+                            pending.includes("monitor.start")
+                          }
+                          onClick={() =>
+                            void run({
+                              type: sessionActive
+                                ? "monitor.pause"
+                                : "monitor.start",
+                            })
+                          }
+                        >
+                          {sessionActive ? (
+                            <Pause size={15} />
+                          ) : (
+                            <Play size={15} />
+                          )}
+                          {sessionActive
+                            ? "Pause AI"
+                            : snapshot.session === "paused"
+                              ? "Resume watching"
+                              : "Start watching"}
+                        </button>
+                      </div>
+                    </div>
+                    {primarySource ? (
+                      renderSource(primarySource, "primary")
+                    ) : (
+                      <div className="desktop-empty">
+                        <Monitor size={40} />
+                        <h3>Bring your desktop into view</h3>
+                        <p>
+                          Select a monitor, window, or synthetic demo.
+                          <br />
+                          Capture starts only after you choose a source.
+                        </p>
+                        <button
+                          className="button primary"
+                          disabled={!bridge || snapshot.sources.length >= 4}
+                          onClick={() => setAddOpen(true)}
+                        >
+                          <Plus size={17} />
+                          Connect a source
+                        </button>
+                      </div>
                     )}
-                  </div>
-                  <div className="capture-footnote">
-                    <ShieldCheck size={15} />
-                    <span>
-                      Privacy masks are applied before frames reach your model.
-                      Stop all releases every source.
-                    </span>
-                  </div>
-                  <div className="section-heading activity-heading">
-                    <h2>Recent activity</h2>
-                    <button
-                      className="text-button"
-                      onClick={() => setTab("Event log")}
-                    >
-                      View all <ArrowUpRight size={14} />
-                    </button>
-                  </div>
-                  <div className="activity-list">
-                    {snapshot.events.length === 0 ? (
-                      <div className="empty-activity">
-                        <Activity size={18} />
-                        <span>
-                          Activity will appear when you connect a source or
-                          start watching.
-                        </span>
+                    {screenSources.length > 1 && (
+                      <div
+                        className="desktop-switcher"
+                        aria-label="Other desktop sources"
+                      >
+                        {screenSources
+                          .filter((source) => source.id !== primarySource?.id)
+                          .map((source) => renderSource(source, "thumbnail"))}
+                      </div>
+                    )}
+                    <div className="capture-footnote">
+                      <ShieldCheck size={14} />
+                      <span>
+                        Masked before AI analysis · Stop all releases every
+                        feed.
+                      </span>
+                    </div>
+                  </section>
+                  <section
+                    className="panel camera-panel"
+                    aria-label="Camera feeds"
+                  >
+                    <div className="feed-panel-heading">
+                      <Camera size={22} />
+                      <div>
+                        <h2>
+                          Camera feeds{" "}
+                          <span className="count">{cameraSources.length}</span>
+                        </h2>
+                        <p>Live views from your selected cameras.</p>
+                      </div>
+                      <button
+                        className="text-button"
+                        disabled={!bridge || snapshot.sources.length >= 4}
+                        onClick={() => setAddOpen(true)}
+                      >
+                        <Plus size={16} />
+                        Add source
+                      </button>
+                    </div>
+                    {cameraSources.length > 0 ? (
+                      <div className="camera-grid">
+                        {cameraSources.map((source) =>
+                          renderSource(source, "camera"),
+                        )}
                       </div>
                     ) : (
-                      snapshot.events
-                        .slice(-4)
-                        .reverse()
-                        .map((event) => (
-                          <div className="activity-row" key={event.id}>
-                            <span className={`event-icon ${event.type}`}>
-                              <Activity size={15} />
-                            </span>
-                            <div>
-                              <p>{event.message}</p>
-                              <span>
-                                {event.type} · {time(event.occurredAt)}
-                              </span>
-                            </div>
-                            {!event.acknowledged && (
-                              <button
-                                className="icon-button"
-                                aria-label="Acknowledge event"
-                                onClick={() =>
-                                  void run({
-                                    type: "events.ack",
-                                    eventId: event.id,
-                                  })
-                                }
-                              >
-                                <Check size={15} />
-                              </button>
-                            )}
-                          </div>
-                        ))
+                      <div className="camera-empty">
+                        <Camera size={23} />
+                        <span>
+                          No cameras connected. Add a webcam or OBS virtual
+                          camera.
+                        </span>
+                      </div>
                     )}
-                  </div>
+                  </section>
                 </div>
-                <Conversation snapshot={snapshot} run={run} pending={pending} />
+                <div className="awareness-column">
+                  <Conversation
+                    snapshot={snapshot}
+                    run={run}
+                    pending={pending}
+                  />
+                  <section
+                    className="panel operator-summary"
+                    aria-label="Computer actions"
+                  >
+                    <div className="summary-heading">
+                      <Settings2 size={23} />
+                      <div>
+                        <h2>Computer actions</h2>
+                        <p>The Operator proposes. You approve every step.</p>
+                      </div>
+                    </div>
+                    {snapshot.pendingPlan && (
+                      <p className="pending-plan-note">
+                        {snapshot.pendingPlan.steps.length} proposed steps are
+                        ready for review.
+                      </p>
+                    )}
+                    <div className="operator-summary-actions">
+                      <span>
+                        <ShieldCheck size={14} />
+                        Ask before acting
+                      </span>
+                      <button
+                        className="button primary"
+                        onClick={() => setTab("Operator")}
+                      >
+                        <MousePointer2 size={16} />
+                        {snapshot.pendingPlan ? "Review plan" : "Open Operator"}
+                      </button>
+                    </div>
+                  </section>
+                  <section
+                    className="panel overview-activity"
+                    aria-label="Recent activity"
+                  >
+                    <div className="summary-heading">
+                      <Activity size={22} />
+                      <div>
+                        <h2>Recent activity</h2>
+                        <p>Observations, motion, and action results.</p>
+                      </div>
+                      <button
+                        className="text-button"
+                        onClick={() => setTab("Event log")}
+                      >
+                        View all <ArrowUpRight size={14} />
+                      </button>
+                    </div>
+                    <div className="activity-list">
+                      {snapshot.events.length === 0 ? (
+                        <div className="empty-activity">
+                          <Radio size={18} />
+                          <span>
+                            Events will appear when you connect a source or
+                            start watching.
+                          </span>
+                        </div>
+                      ) : (
+                        snapshot.events
+                          .slice(-4)
+                          .reverse()
+                          .map((event) => (
+                            <div className="activity-row" key={event.id}>
+                              <span className={`event-icon ${event.type}`}>
+                                <Activity size={15} />
+                              </span>
+                              <div>
+                                <p>{event.message}</p>
+                                <span>
+                                  {event.type} · {time(event.occurredAt)}
+                                </span>
+                              </div>
+                              {!event.acknowledged && (
+                                <button
+                                  className="icon-button"
+                                  aria-label="Acknowledge event"
+                                  onClick={() =>
+                                    void run({
+                                      type: "events.ack",
+                                      eventId: event.id,
+                                    })
+                                  }
+                                >
+                                  <Check size={15} />
+                                </button>
+                              )}
+                            </div>
+                          ))
+                      )}
+                    </div>
+                  </section>
+                </div>
               </div>
             </>
           )}
@@ -706,6 +858,8 @@ function Stat({
 
 function SourceTile({
   source,
+  presentation,
+  onFocus,
   info,
   observation,
   pending,
@@ -716,6 +870,8 @@ function SourceTile({
   onToggle,
 }: {
   source: Source;
+  presentation: "primary" | "thumbnail" | "camera";
+  onFocus?: () => void;
   info: ReturnType<CaptureManager["info"]>;
   observation?: Snapshot["observations"][number];
   pending: boolean;
@@ -763,7 +919,10 @@ function SourceTile({
       <Monitor size={17} />
     );
   return (
-    <article data-testid="source-tile" className="source-tile">
+    <article
+      data-testid="source-tile"
+      className={`source-tile ${presentation}`}
+    >
       <div className="source-title">
         <div>
           {icon}
@@ -779,6 +938,16 @@ function SourceTile({
               ? "UNAVAILABLE"
               : "STOPPED"}
         </span>
+        {onFocus && (
+          <button
+            className="icon-button focus-source"
+            onClick={onFocus}
+            aria-label={`Focus ${source.name}`}
+            title="Show in the large preview"
+          >
+            <ArrowUpRight size={17} />
+          </button>
+        )}
       </div>
       <div className="source-preview">
         {info?.stream ? (
