@@ -1,0 +1,35 @@
+# Runtime/private state
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+credentials/
+recordings/
+captures/
+*.sqlite
+*.sqlite3
+*.db
+*.db-shm
+*.db-wal
+
+# Build and tooling
+node_modules/
+dist/
+build/
+coverage/
+__pycache__/
+*.pyc
+.venv/
+work/
+.DS_Store
+Thumbs.db
+
+# Local OMX runtime; durable planning docs and slice registry are versioned
+.omx/sessions/
+.omx/state/
+.omx/team/
+.omx/memory/
+.omx/hud-config.json
+.omx/logs/ledger.json
+.omx/logs/*.jsonl

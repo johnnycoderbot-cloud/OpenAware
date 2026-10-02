@@ -1,0 +1,1900 @@
+{
+  "schema_version": 1,
+  "status": "planned",
+  "scope": "Planning-only repository; initial execution slices plus gated later backlog; no application implementation exists yet",
+  "date": "2026-10-02",
+  "estimation_basis": "OA-001..018 aggregate 68-136 first-pass work-unit hours only, NOT a validated alpha completion estimate. Each unit assumes 30-60 minutes with prepared environment; review, rework, unsupported vendor/hardware, security validation and packaging/signing gate waits are additional and may dominate elapsed effort. OA-019..026 estimates remain TBD after separate capability/authorization spikes and are excluded.",
+  "slices": [
+    {
+      "id": "OA-001",
+      "title": "Verify LM Studio and Bionic integration boundaries",
+      "phase": "P0",
+      "depends_on": [],
+      "files": [
+        "tools/spikes/lm-studio.ts",
+        "tools/spikes/bionic-mcp.ts",
+        "docs/integrations.md",
+        "docs/decisions.md"
+      ],
+      "acceptance": [
+        "Record tested application/API versions, platform, hardware class, and model identifier without secrets.",
+        "Demonstrate vision request success or a reproducible failure against LM Studio; record capability metadata separately from tested inference.",
+        "Test Bionic MCP tool discovery and image-content delivery; record unsupported image handling and a text-observation fallback.",
+        "Treat selected-model synchronization, an embedded dashboard, and unsolicited Bionic alerts as separate unresolved capabilities until demonstrated."
+      ],
+      "verification": [
+        "Opt-in local spike with a synthetic labeled image and no personal feeds.",
+        "Capture redacted request/response schemas, selected-model observations, and a pass/fail matrix.",
+        "Verify the standalone fallback is documented for each unsupported Bionic feature."
+      ],
+      "estimate": "4-8 first-pass work-unit hours; NOT an alpha completion estimate; assumption: 8 bounded 30-60 minute work units, prepared environment and fixtures; integration waits/rework excluded",
+      "gate": "G0: LM Studio reference evidence accepted; Bionic outcomes pass or explicitly defer with standalone/manual-binding/local-alert fallbacks.",
+      "deliverable": "Verify LM Studio and Bionic integration boundaries",
+      "work_units": [
+        {
+          "title": "Create synthetic image and version recorder",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Probe model discovery schema",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Probe vision inference with a test image",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Launch minimal stdio MCP fixture",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Verify Bionic discovery and image output",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Inspect selected-model exposure",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Inspect embedding and notification support",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Write evidence and fallback decisions",
+          "estimate": "30-60 minutes"
+        }
+      ],
+      "requirement_ids": [
+        "OA-AI-003",
+        "OA-MOD-003"
+      ],
+      "phase_type": "initial"
+    },
+    {
+      "id": "OA-002",
+      "title": "Create desktop shell and authenticated local service lifecycle",
+      "phase": "P1",
+      "depends_on": [
+        "OA-001"
+      ],
+      "files": [
+        "apps/desktop/src/main/index.ts",
+        "apps/desktop/src/preload/index.ts",
+        "apps/desktop/src/renderer/App.tsx",
+        "apps/service/src/index.ts",
+        "packages/contracts/src/lifecycle.ts"
+      ],
+      "acceptance": [
+        "Electron shell displays idle, starting, ready, stopping, and failed states.",
+        "Renderer has no Node integration; context isolation and a narrow validated preload bridge are enabled.",
+        "Service binds to loopback and requires an ephemeral session credential; renderer never receives provider keys.",
+        "Shutdown cancels work, closes IPC, and reports a failure visibly if the service cannot exit."
+      ],
+      "verification": [
+        "Lifecycle integration tests for normal start, process failure, duplicate launch, and shutdown.",
+        "Reject an unauthenticated local request and a request from an unauthorized origin.",
+        "Verify renderer cannot execute arbitrary filesystem or shell operations."
+      ],
+      "estimate": "4-8 first-pass work-unit hours; NOT an alpha completion estimate; assumption: 8 bounded 30-60 minute work units, prepared environment and fixtures; integration waits/rework excluded",
+      "gate": "G1a: shell and local trust boundary operate before any personal source is attached.",
+      "deliverable": "Create desktop shell and authenticated local service lifecycle",
+      "work_units": [
+        {
+          "title": "Scaffold workspace and type checks",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Add Electron main window",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Add validated preload interface",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Add service boot handshake",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Add loopback authentication",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Render lifecycle status",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Implement orderly shutdown",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Verify failure and trust cases",
+          "estimate": "30-60 minutes"
+        }
+      ],
+      "requirement_ids": [
+        "OA-CTL-003",
+        "OA-CTL-004",
+        "OA-DAT-003"
+      ],
+      "phase_type": "initial"
+    },
+    {
+      "id": "OA-003",
+      "title": "Add one camera or OBS virtual-camera live preview",
+      "phase": "P1",
+      "depends_on": [
+        "OA-002"
+      ],
+      "files": [
+        "apps/desktop/src/renderer/sources/CameraPicker.tsx",
+        "apps/desktop/src/renderer/sources/PreviewTile.tsx",
+        "packages/capture/src/camera.ts",
+        "packages/contracts/src/source.ts"
+      ],
+      "acceptance": [
+        "User can enumerate camera devices, select ordinary camera or OBS Virtual Camera, and explicitly start preview.",
+        "Preview requests 1280x720 at 15 fps where supported; actual negotiated resolution/rate are shown. AI analysis is still off.",
+        "Permission denial, absent device, device in use, and disconnected device have actionable states.",
+        "Stop releases the media track and indicator; OBS is an external optional dependency rather than bundled software."
+      ],
+      "verification": [
+        "Synthetic media-device tests for permission denial, negotiation, disconnect, and stop.",
+        "Opt-in Windows native check with one camera and one OBS virtual camera where available.",
+        "Confirm no image is sent to a model or stored during preview-only use."
+      ],
+      "estimate": "4-8 first-pass work-unit hours; NOT an alpha completion estimate; assumption: 8 bounded 30-60 minute work units, prepared environment and fixtures; integration waits/rework excluded",
+      "gate": "G1b: first consented live preview works; virtual-camera device support is evidenced.",
+      "deliverable": "Add one camera or OBS virtual-camera live preview",
+      "work_units": [
+        {
+          "title": "Add device discovery",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Add explicit source permission flow",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Attach negotiated media stream",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Build preview tile",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Add disconnect/error states",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Release tracks on stop",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Create synthetic camera fixture",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Run opt-in native check",
+          "estimate": "30-60 minutes"
+        }
+      ],
+      "requirement_ids": [
+        "OA-SRC-001",
+        "OA-SRC-004"
+      ],
+      "phase_type": "initial"
+    },
+    {
+      "id": "OA-004",
+      "title": "Coordinate simultaneous source states and global stop",
+      "phase": "P1",
+      "depends_on": [
+        "OA-003"
+      ],
+      "files": [
+        "packages/capture/src/source-registry.ts",
+        "apps/desktop/src/renderer/sources/SourceGrid.tsx",
+        "apps/desktop/src/renderer/sources/SourceControls.tsx",
+        "packages/contracts/src/source-state.ts"
+      ],
+      "acceptance": [
+        "Four-source baseline can show individual live previews with independent source IDs and status.",
+        "State transitions distinguish configured, previewing, monitoring, paused, stopped, and unavailable.",
+        "Per-source pause prevents background analysis/rules while previews remain visible; an explicit one-time question does not resume background work. Global stop immediately blocks new frame exports and requests cancellation.",
+        "Failure of one source leaves others operational; stopped sources require explicit restart.",
+        "Global stop invalidates new analysis/export immediately; proposed reference acceptance is UI acknowledgement and acquisition cessation within 1 second, app-owned resource teardown within 2 seconds, with cleanup failure visible.",
+        "Treat an OBS composite as one parent source. Any selected regions preserve parent/frame/geometry lineage; scene layout or crop/DPI changes invalidate ROI-dependent policy/evidence rather than counting regions as independent sources.",
+        "Watch pause/stop invalidates only that watch's background work while preview/capture may serve other authorized watches. Source capture pause/stop is a separate explicit control; global stop ends all app-owned acquisition."
+      ],
+      "verification": [
+        "Deterministic transition and race tests including stop during frame extraction.",
+        "Four synthetic sources with one disconnect and one paused source.",
+        "Native four-source check records achieved device mix and preview rates rather than implying all hosts support four cameras.",
+        "Synthetic OBS scene/crop revision test prevents ROI evidence from surviving layout change; watch-pause test preserves another watch and live preview."
+      ],
+      "estimate": "4-8 first-pass work-unit hours; NOT an alpha completion estimate; assumption: 8 bounded 30-60 minute work units, prepared environment and fixtures; integration waits/rework excluded",
+      "gate": "G1: standalone four-source preview and stop contract accepted.",
+      "deliverable": "Coordinate simultaneous source states and global stop",
+      "work_units": [
+        {
+          "title": "Implement source registry",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Implement explicit transitions",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Build four-tile grid",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Add per-source controls",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Add global stop generation token",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Handle one-source disconnect",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Test stop race",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Record baseline source mix",
+          "estimate": "30-60 minutes"
+        }
+      ],
+      "requirement_ids": [
+        "OA-SRC-002",
+        "OA-SRC-003",
+        "OA-CTL-001",
+        "OA-CTL-002",
+        "OA-CTL-003",
+        "OA-CTL-004"
+      ],
+      "phase_type": "initial"
+    },
+    {
+      "id": "OA-005",
+      "title": "Enforce masks, provider consent, and retention policy before export",
+      "phase": "P2",
+      "depends_on": [
+        "OA-004"
+      ],
+      "files": [
+        "packages/core/src/policy/source-policy.ts",
+        "packages/core/src/policy/frame-mask.ts",
+        "apps/desktop/src/renderer/privacy/SourcePrivacy.tsx",
+        "apps/service/src/policy-gateway.ts"
+      ],
+      "acceptance": [
+        "Cloud upload is disabled initially and requires consent for the specific source and destination.",
+        "Masks are applied before inference, persistence, thumbnails, and MCP image output; unsupported masking fails closed.",
+        "Raw frames have no default disk retention; short in-memory working frames are cleared on stop.",
+        "Permission changes invalidate queued work; secrets are excluded from diagnostics and exported reports.",
+        "Enforce a 4 MiB aggregate serialized image-export cap including base64 and JSON envelope, not only raw pixels; bound allocation before decoding/resizing/serialization.",
+        "Mask/ROI geometry uses parent-source revision and rejects changed scene/layout/DPI until masks are reviewed; excluded pixels cannot reappear after transform or batch encoding."
+      ],
+      "verification": [
+        "Policy-denial tests prove adapters and MCP never see unmasked or unauthorized bytes.",
+        "Golden synthetic fixtures for masks, resized coordinates, and source geometry changes.",
+        "Stop/permission-revocation race and temporary-file cleanup tests.",
+        "Oversized/base64-expanded/batched payload fixtures prove aggregate serialized cap and no allocation/export before policy validation."
+      ],
+      "estimate": "4-8 first-pass work-unit hours; NOT an alpha completion estimate; assumption: 8 bounded 30-60 minute work units, prepared environment and fixtures; integration waits/rework excluded",
+      "gate": "G2a: all frame egress passes the same privacy gateway.",
+      "deliverable": "Enforce masks, provider consent, and retention policy before export",
+      "work_units": [
+        {
+          "title": "Define per-source policy schema",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Build privacy controls",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Implement mask transform",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Gate frame egress",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Invalidate queued permissions",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Implement memory/temp cleanup",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Add synthetic mask fixtures",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Verify denial and revocation",
+          "estimate": "30-60 minutes"
+        }
+      ],
+      "requirement_ids": [
+        "OA-DAT-001",
+        "OA-DAT-003",
+        "OA-DAT-004",
+        "OA-DAT-005"
+      ],
+      "phase_type": "initial"
+    },
+    {
+      "id": "OA-006",
+      "title": "Implement bounded fair scheduling and freshness accounting",
+      "phase": "P2",
+      "depends_on": [
+        "OA-004",
+        "OA-005"
+      ],
+      "files": [
+        "packages/core/src/scheduler/scheduler.ts",
+        "packages/core/src/scheduler/latest-frame.ts",
+        "packages/contracts/src/freshness.ts",
+        "apps/desktop/src/renderer/status/AnalysisStatus.tsx"
+      ],
+      "acceptance": [
+        "Proposed default eligibility is every 2 seconds per active source, with one local inference in flight and at most one newest pending frame per source.",
+        "Round-robin eligibility prevents a high-change source from starving another active source.",
+        "Every observation carries source ID, captured time, analyzed time, age, and stale status. Dispatch rejects frames older than 5 seconds; completed observations become unknown/stale above 15 seconds measured from original capture/acquisition time, never response arrival. Never label an expired observation current.",
+        "Pause/stop drops pending work; late results from a prior session are discarded; bounded queues do not grow under slow inference.",
+        "Foreground questions take the next free bounded slot; continuous chat permits a background source turn after at most one question turn."
+      ],
+      "verification": [
+        "Fake-clock fairness test with four sources, a 5-second model delay, and repeated updates.",
+        "Property/invariant checks for queue bound, no paused exports, monotonic source observation version, and no late-session delivery.",
+        "Resource counters prove dropped/superseded work and wait times are visible.",
+        "Fake-clock priority test injects continuous questions and proves a background turn after at most one question turn."
+      ],
+      "estimate": "4-8 first-pass work-unit hours; NOT an alpha completion estimate; assumption: 8 bounded 30-60 minute work units, prepared environment and fixtures; integration waits/rework excluded",
+      "gate": "G2b: fairness and freshness pass independently of model speed.",
+      "deliverable": "Implement bounded fair scheduling and freshness accounting",
+      "work_units": [
+        {
+          "title": "Implement newest-frame mailbox",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Implement fake-clock scheduler",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Add per-source round robin",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Bound concurrency and cancellation",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Reject late session results",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Attach freshness fields",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Build freshness status UI",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Test slow-provider fairness",
+          "estimate": "30-60 minutes"
+        }
+      ],
+      "requirement_ids": [
+        "OA-AI-001",
+        "OA-AI-002",
+        "OA-AI-004",
+        "OA-AI-005",
+        "OA-CHAT-002"
+      ],
+      "phase_type": "initial"
+    },
+    {
+      "id": "OA-007",
+      "title": "Use LM Studio model discovery and explicit selection",
+      "phase": "P2",
+      "depends_on": [
+        "OA-001",
+        "OA-002"
+      ],
+      "files": [
+        "packages/providers/src/lm-studio/discovery.ts",
+        "packages/providers/src/model-binding.ts",
+        "apps/desktop/src/renderer/models/ModelConnection.tsx",
+        "packages/contracts/src/provider.ts"
+      ],
+      "acceptance": [
+        "Configured LM Studio endpoint discovers available models and distinguishes unavailable, advertised vision, verified vision, and failed vision states.",
+        "Persist an explicit selected model ID; change/unload pauses dispatch, invalidates old work, probes the new selection, and requires explicit resume while previews remain visible.",
+        "Display the selected model source and last verification time.",
+        "Prefer an evidenced Bionic selection API if one exists; otherwise clearly require explicit monitoring-model binding and never claim automatic picker sync."
+      ],
+      "verification": [
+        "Provider discovery fixtures for empty list, incompatible model, unloaded model, malformed data, and endpoint outage.",
+        "Integration test switching model A to B drops pending A results.",
+        "Opt-in local discovery check using a user-selected test model."
+      ],
+      "estimate": "3-6 first-pass work-unit hours; NOT an alpha completion estimate; assumption: 6 bounded 30-60 minute work units, prepared environment and fixtures; integration waits/rework excluded",
+      "gate": "G2c: monitoring model identity is explicit and recoverable.",
+      "deliverable": "Use LM Studio model discovery and explicit selection",
+      "work_units": [
+        {
+          "title": "Implement discovery adapter",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Normalize capability states",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Build model connection picker",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Persist explicit model binding",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Invalidate changed model sessions",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Test discovery and switching",
+          "estimate": "30-60 minutes"
+        }
+      ],
+      "requirement_ids": [
+        "OA-MOD-001",
+        "OA-MOD-002",
+        "OA-MOD-003",
+        "OA-AI-003"
+      ],
+      "phase_type": "initial"
+    },
+    {
+      "id": "OA-008",
+      "title": "Analyze one bounded frame through LM Studio",
+      "phase": "P2",
+      "depends_on": [
+        "OA-006",
+        "OA-007"
+      ],
+      "files": [
+        "packages/providers/src/lm-studio/inference.ts",
+        "packages/core/src/observations/normalize.ts",
+        "apps/service/src/analysis-worker.ts",
+        "packages/contracts/src/observation.ts"
+      ],
+      "acceptance": [
+        "A masked frame reaches the selected local vision model with bounded image size and a versioned observation prompt.",
+        "Normalize structured output; invalid, uncertain, or hallucinated output cannot silently become a confirmed event.",
+        "Requests time out and retry only within a bounded policy; cancellation prevents result publication even if remote compute cannot be interrupted.",
+        "Observation reports model ID, source evidence time, processing duration, and uncertainty; slow inference leaves previews running.",
+        "LM Studio requests explicitly set store:false on the supported API path; monitoring never requests retained server conversations."
+      ],
+      "verification": [
+        "Mock provider tests for valid JSON, malformed output, refusal, timeout, rate limit, disconnect, and delayed success after stop.",
+        "Synthetic image labeled with a source-specific marker proves correct routing.",
+        "Opt-in LM Studio test against the same fixture; no hard model-independent accuracy promise.",
+        "Mock request inspection asserts store:false for inference/chat paths and verifies the configured endpoint/API contract; do not infer external server retention guarantees from this request flag."
+      ],
+      "estimate": "4-8 first-pass work-unit hours; NOT an alpha completion estimate; assumption: 8 bounded 30-60 minute work units, prepared environment and fixtures; integration waits/rework excluded",
+      "gate": "G2: local sampled analysis passes with honest timestamps and bounded work.",
+      "deliverable": "Analyze one bounded frame through LM Studio",
+      "work_units": [
+        {
+          "title": "Encode approved frame request",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Implement inference transport",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Normalize structured observation",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Mark uncertainty and parse failures",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Bound timeout/retry",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Suppress canceled publications",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Wire observation to source tile",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Test mock and opt-in local paths",
+          "estimate": "30-60 minutes"
+        }
+      ],
+      "requirement_ids": [
+        "OA-AI-002",
+        "OA-AI-003",
+        "OA-AI-004",
+        "OA-AI-006",
+        "OA-MOD-002"
+      ],
+      "phase_type": "initial"
+    },
+    {
+      "id": "OA-009",
+      "title": "Store metadata events and a bounded local timeline",
+      "phase": "P3",
+      "depends_on": [
+        "OA-008"
+      ],
+      "files": [
+        "packages/storage/src/migrations/001-events.sql",
+        "packages/storage/src/events.ts",
+        "apps/desktop/src/renderer/events/Timeline.tsx",
+        "packages/contracts/src/event.ts"
+      ],
+      "acceptance": [
+        "Session observations/events/conversation are memory-only by default with a proposed 1,000-event/16 MiB content cap. Structural settings persist separately. Explicit local-history consent enables encrypted SQLite content; raw images require a separate choice and remain off.",
+        "Opt-in encrypted history shows its location/content; proposed retention is seven days and 100 MiB, with clear/delete/export controls, OS-protected keys, and redacted exports.",
+        "Restart restores monitoring configuration in an inactive state until the user starts sources.",
+        "Database failure is visible; bounded writes cannot block capture/preview."
+      ],
+      "verification": [
+        "Migration and transactional failure tests using temporary SQLite databases.",
+        "Retention test with fake time and export redaction fixture.",
+        "Restart confirms inactive source state and no hidden automatic capture.",
+        "With content history disabled, assert no content-bearing history rows or image files are persisted; structural SQLite configuration/minimal audits may remain. Enabling history cannot implicitly retain raw frames.",
+        "Verify encryption/key-store behavior, bounded memory/history quotas, and redacted clear/delete/export paths using synthetic content."
+      ],
+      "estimate": "3-6 first-pass work-unit hours; NOT an alpha completion estimate; assumption: 6 bounded 30-60 minute work units, prepared environment and fixtures; integration waits/rework excluded",
+      "gate": "G3a: event storage is bounded, recoverable, and readable.",
+      "deliverable": "Store metadata events and a bounded local timeline",
+      "work_units": [
+        {
+          "title": "Create event migration",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Implement bounded persistence",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Add retention cleanup",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Build timeline",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Implement redacted export",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Test restart and database failures",
+          "estimate": "30-60 minutes"
+        }
+      ],
+      "requirement_ids": [
+        "OA-ALT-005",
+        "OA-DAT-001",
+        "OA-DAT-002",
+        "OA-DAT-003",
+        "OA-CTL-004"
+      ],
+      "phase_type": "initial"
+    },
+    {
+      "id": "OA-010",
+      "title": "Expose read-only observation tools to Bionic",
+      "phase": "P3",
+      "depends_on": [
+        "OA-001",
+        "OA-005",
+        "OA-009"
+      ],
+      "files": [
+        "packages/mcp/src/server.ts",
+        "packages/mcp/src/tools/look.ts",
+        "packages/mcp/src/tools/events.ts",
+        "integrations/bionic/skills/openaware/SKILL.md",
+        "docs/integrations.md"
+      ],
+      "acceptance": [
+        "Bionic can discover the bridge, list authorized sources, request a current observation/image, and query recent events.",
+        "Image tool content uses tested MCP format; a compatible text observation fallback is explicit if the active model cannot consume tool images.",
+        "Bridge cannot silently enable capture, change provider destinations, perform actions, or bypass masks.",
+        "Tools return source freshness and source-not-running/model-unavailable errors; do not rely on unsolicited Bionic alerts or embedded UI.",
+        "Images and observation summaries are both exports: delivery requires an explicit Bionic host/model route and retention grant. Strict-local policy denies unknown or nonlocal routes; a generic MCP connection is not proof the host's selected model is local.",
+        "If Bionic is unavailable or image/tool compatibility fails, explicitly defer the bridge, hide its unavailable feature, and preserve standalone dashboard/alerts/conversation; alpha does not require Bionic.",
+        "MCP image result batches enforce the same 4 MiB aggregate serialized cap including base64/JSON; status-only pairing never grants content."
+      ],
+      "verification": [
+        "MCP protocol fixture tests for schemas, invalid input, denied source, unavailable source, and sanitized image/text output.",
+        "Opt-in Bionic end-to-end tool call with a synthetic source and compatible model.",
+        "Test expired local service credential and bridge reconnect without recapturing sources.",
+        "Image and summary export tests deny unknown host route, unsupported retention choice, cloud route under strict-local policy, and revoked grants; summaries cannot bypass image consent.",
+        "Batched image response with base64 expansion crosses cap and is rejected/bounded; summary-only export still requires its own grant."
+      ],
+      "estimate": "4-8 first-pass work-unit hours; NOT an alpha completion estimate; assumption: 8 bounded 30-60 minute work units, prepared environment and fixtures; integration waits/rework excluded",
+      "gate": "G3b: bridge passes tested read-only route/retention/image handling OR is explicitly deferred with unavailable feature hidden and standalone dashboard/local-alert fallback documented.",
+      "deliverable": "Expose read-only observation tools to Bionic",
+      "work_units": [
+        {
+          "title": "Define read-only MCP schemas",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Add local service connection",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Implement source and look tools",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Implement event-query tool",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Add image/text compatibility fallback",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Write Bionic installation skill",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Test protocol and permission errors",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Run synthetic Bionic acceptance",
+          "estimate": "30-60 minutes"
+        }
+      ],
+      "requirement_ids": [
+        "OA-MOD-003",
+        "OA-SRC-003",
+        "OA-AI-004",
+        "OA-DAT-005",
+        "OA-ACT-001"
+      ],
+      "phase_type": "initial"
+    },
+    {
+      "id": "OA-011",
+      "title": "Add watch rules, debounced local alerts, and event acknowledgement",
+      "phase": "P3",
+      "depends_on": [
+        "OA-009"
+      ],
+      "files": [
+        "packages/core/src/rules/evaluate.ts",
+        "packages/core/src/rules/debounce.ts",
+        "apps/service/src/notifications/local.ts",
+        "apps/desktop/src/renderer/rules/RuleEditor.tsx",
+        "apps/desktop/src/renderer/events/EventDetails.tsx"
+      ],
+      "acceptance": [
+        "Rules bind a named source and region to deterministic motion sensitivity/hold/cooldown or an explicit semantic condition/cadence/expiry; rule creation never authorizes actions.",
+        "Repeated observations coalesce by rule/source/active condition. Cooldown is 30 seconds from the last trigger; semantic reset needs two clear samples, including samples during cooldown. Rearm only after cooldown elapsed and latest fresh evidence remains clear; stale or missing evidence never clears or rearms. Acknowledge/snooze controls remain available.",
+        "Local dashboard/OS alerts show evidence timestamp and uncertainty; unknown or stale evidence cannot satisfy a fresh condition.",
+        "Notification delivery failure appears in the timeline; Bionic unsolicited notification delivery remains disabled until a compatibility gate passes.",
+        "Source-group rules declare any/all/ordered relation and evidence skew (proposed 5 seconds). Missing/stale members make all unknown; preserve member timestamps, and do not count repeated ROIs of one parent as independent observations."
+      ],
+      "verification": [
+        "Synthetic observation replay for true/false/unknown/stale conditions, cooldown, acknowledgement, and snooze.",
+        "Fake-clock duplicate event and retry tests.",
+        "Opt-in native Windows notification test with a harmless synthetic event.",
+        "Synthetic frame sequence tests sustained motion, pixel noise, selected region, hold time, cooldown/clear/rearm, disconnected source, disabled/deleted/paused rules.",
+        "Group replay tests cover any/all, missing/stale members, >5-second skew, ordered relations, and duplicate parent-source regions; unsupported relation yields an explicit gate."
+      ],
+      "estimate": "4-8 first-pass work-unit hours; NOT an alpha completion estimate; assumption: 8 bounded 30-60 minute work units, prepared environment and fixtures; integration waits/rework excluded",
+      "gate": "G3c: alerts have grounded evidence, bounded repetition, and visible delivery state.",
+      "deliverable": "Add watch rules, debounced local alerts, and event acknowledgement",
+      "work_units": [
+        {
+          "title": "Define rule schema",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Build rule editor",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Evaluate source-specific condition",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Add unknown/stale suppression",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Implement debounce and cooldown",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Add local notification delivery",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Build acknowledgement controls",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Test replay and delivery failure",
+          "estimate": "30-60 minutes"
+        }
+      ],
+      "requirement_ids": [
+        "OA-ALT-001",
+        "OA-ALT-002",
+        "OA-ALT-003",
+        "OA-ALT-004",
+        "OA-ALT-005",
+        "OA-AI-002"
+      ],
+      "phase_type": "initial"
+    },
+    {
+      "id": "OA-012",
+      "title": "Add a grounded conversation panel",
+      "phase": "P3",
+      "depends_on": [
+        "OA-008",
+        "OA-009",
+        "OA-011"
+      ],
+      "files": [
+        "apps/desktop/src/renderer/chat/ChatPanel.tsx",
+        "apps/service/src/chat/context.ts",
+        "packages/contracts/src/chat.ts",
+        "packages/providers/src/chat.ts"
+      ],
+      "acceptance": [
+        "Typed questions expose source-scope chips before sending; new sources are not silently added. Answers cite source labels/age and identify unreadable chart labels instead of inventing ticker/price/time.",
+        "A bounded recent-event context prevents unbounded token growth; fresh frame requests require the same source policy.",
+        "No-model, source-off, slow-response, and canceled-answer states are visible; chat never implies every video frame was understood.",
+        "Bionic remains the preferred external conversation surface; standalone text chat works when Bionic is unavailable.",
+        "Foreground questions use scheduler priority without starving background monitoring; at most one question turn precede an eligible background turn."
+      ],
+      "verification": [
+        "Fixture conversation tests for source attribution, stale evidence, context budget, denied source, and cancel.",
+        "Keyboard-only chat flow and screen-reader status announcements.",
+        "Opt-in local model question about the synthetic scene."
+      ],
+      "estimate": "3-6 first-pass work-unit hours; NOT an alpha completion estimate; assumption: 6 bounded 30-60 minute work units, prepared environment and fixtures; integration waits/rework excluded",
+      "gate": "G3: standalone and Bionic conversation use the same observation contract.",
+      "deliverable": "Add a grounded conversation panel",
+      "work_units": [
+        {
+          "title": "Build accessible text panel",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Implement bounded event context",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Bind questions to source IDs",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Attach freshness citations",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Handle cancellation and errors",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Test synthetic grounded conversation",
+          "estimate": "30-60 minutes"
+        }
+      ],
+      "requirement_ids": [
+        "OA-CHAT-001",
+        "OA-CHAT-002",
+        "OA-CHAT-003",
+        "OA-TRD-001",
+        "OA-AI-004",
+        "OA-CTL-002"
+      ],
+      "phase_type": "initial"
+    },
+    {
+      "id": "OA-013",
+      "title": "Spike voice input/output without weakening stop controls",
+      "phase": "P4",
+      "depends_on": [
+        "OA-012"
+      ],
+      "files": [
+        "tools/spikes/voice.ts",
+        "apps/desktop/src/renderer/voice/VoiceControls.tsx",
+        "docs/decisions.md",
+        "docs/integrations.md"
+      ],
+      "acceptance": [
+        "Compare a local speech path with Bionic-provided voice if documented; record exact package/model licenses and Windows support.",
+        "Demonstrate push-to-talk, explicit microphone indicator, transcript, spoken response, mute, and interrupt on synthetic speech.",
+        "No always-on microphone is enabled by default; stop monitoring and stop microphone are separate visible controls with a global emergency stop for both.",
+        "Document whether voice is ready for release or deferred; do not require an unverified vendor voice API."
+      ],
+      "verification": [
+        "Prerecorded synthetic audio test with no personal voice recordings.",
+        "Opt-in microphone/speaker acceptance for interrupt, no-audio, device disconnect, and acoustic feedback.",
+        "License and dependency review of proposed speech components."
+      ],
+      "estimate": "3-6 first-pass work-unit hours; NOT an alpha completion estimate; assumption: 6 bounded 30-60 minute work units, prepared environment and fixtures; integration waits/rework excluded",
+      "gate": "G4v: ship voice only after local/Bionic support and license evidence pass.",
+      "deliverable": "Spike voice input/output without weakening stop controls",
+      "work_units": [
+        {
+          "title": "Inventory speech options/licenses",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Create synthetic speech fixture",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Probe selected speech path",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Prototype push-to-talk controls",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Test interrupt and device errors",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Record ship/defer voice decision",
+          "estimate": "30-60 minutes"
+        }
+      ],
+      "requirement_ids": [
+        "OA-CHAT-001",
+        "OA-ACC-001",
+        "OA-CTL-003"
+      ],
+      "phase_type": "initial"
+    },
+    {
+      "id": "OA-014",
+      "title": "Validate and add a direct-monitor capture adapter",
+      "phase": "P4",
+      "depends_on": [
+        "OA-004",
+        "OA-005",
+        "OA-006"
+      ],
+      "files": [
+        "tools/spikes/windows-capture.ts",
+        "packages/capture/src/windows-monitor.ts",
+        "apps/desktop/src/renderer/sources/MonitorPicker.tsx",
+        "docs/decisions.md"
+      ],
+      "acceptance": [
+        "Windows experiment verifies monitor enumeration, DPI/rotation geometry, active virtual-desktop visibility, and lock/session behavior.",
+        "Consent selects actual monitor/window sources; no claim that inactive or protected desktops are visible unless demonstrated.",
+        "Successful spike adds the adapter behind a capability flag using existing registry/policy/scheduler; failed spike keeps OBS fallback.",
+        "Capture releases on stop; secure/protected content and session loss are reported unavailable rather than inferred."
+      ],
+      "verification": [
+        "Opt-in Windows tests on available monitor layouts; list untested layouts explicitly.",
+        "Synthetic geometry fixtures for DPI, rotation, crop masks, and display removal.",
+        "Native stop check confirms capture handles close."
+      ],
+      "estimate": "4-8 first-pass work-unit hours; NOT an alpha completion estimate; assumption: 8 bounded 30-60 minute work units, prepared environment and fixtures; integration waits/rework excluded",
+      "gate": "G4m: direct monitor support ships only for demonstrated capture/session cases.",
+      "deliverable": "Validate and add a direct-monitor capture adapter",
+      "work_units": [
+        {
+          "title": "Create capture probe",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Verify permission and session limits",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Test DPI and rotation cases",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Add feature-gated adapter",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Build monitor selector",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Map source geometry to masks",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Handle display/session loss",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Record native evidence",
+          "estimate": "30-60 minutes"
+        }
+      ],
+      "requirement_ids": [
+        "OA-SRC-001",
+        "OA-SRC-003",
+        "OA-SRC-005",
+        "OA-DAT-005",
+        "OA-CTL-003"
+      ],
+      "phase_type": "initial"
+    },
+    {
+      "id": "OA-015",
+      "title": "Validate and add an IP-camera stream adapter",
+      "phase": "P4",
+      "depends_on": [
+        "OA-004",
+        "OA-005",
+        "OA-006"
+      ],
+      "files": [
+        "tools/spikes/ip-camera.ts",
+        "packages/capture/src/ip-camera.ts",
+        "apps/desktop/src/renderer/sources/NetworkCameraForm.tsx",
+        "docs/decisions.md"
+      ],
+      "acceptance": [
+        "Pick and evidence one initial transport rather than promising every RTSP/ONVIF/WebRTC camera.",
+        "User explicitly configures allowed camera endpoint; credentials stay in OS secret storage and URLs/logs are redacted.",
+        "Decode into bounded latest-frame buffers; reconnection uses backoff and a retry ceiling.",
+        "Stop closes sockets/decoder process; unsupported codec, bad credentials, offline feed, and oversized stream are visible errors."
+      ],
+      "verification": [
+        "Local synthetic stream fixture covers disconnect, reconnect, bad credentials, decoder failure, and max frame size.",
+        "Endpoint validation tests prevent implicit access to unrelated services and credential logging.",
+        "Opt-in camera check only with explicitly selected user device."
+      ],
+      "estimate": "4-8 first-pass work-unit hours; NOT an alpha completion estimate; assumption: 8 bounded 30-60 minute work units, prepared environment and fixtures; integration waits/rework excluded",
+      "gate": "G4i: one supported transport passes authentication, bounded decoding, and stop tests.",
+      "deliverable": "Validate and add an IP-camera stream adapter",
+      "work_units": [
+        {
+          "title": "Compare transport and codec choices",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Create synthetic stream server fixture",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Implement endpoint validation",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Add secret reference handling",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Add bounded decoder adapter",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Handle disconnect/retry",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Test stop and malformed stream",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Document supported transport",
+          "estimate": "30-60 minutes"
+        }
+      ],
+      "requirement_ids": [
+        "OA-SRC-001",
+        "OA-SRC-003",
+        "OA-SRC-005",
+        "OA-DAT-003",
+        "OA-CTL-003"
+      ],
+      "phase_type": "initial"
+    },
+    {
+      "id": "OA-016",
+      "title": "Add structured market conditions and paper-only trade proposals",
+      "phase": "P4",
+      "depends_on": [
+        "OA-009",
+        "OA-011",
+        "OA-012"
+      ],
+      "files": [
+        "packages/core/src/market-data/adapter.ts",
+        "packages/core/src/market-data/conditions.ts",
+        "packages/core/src/trading/paper-proposal.ts",
+        "apps/desktop/src/renderer/trading/PaperPanel.tsx",
+        "docs/decisions.md"
+      ],
+      "acceptance": [
+        "Numerical threshold rules use structured timestamped market data with symbol, venue, units, source, and freshness; screenshots support qualitative chart discussion only.",
+        "Initial integration uses synthetic/replay data until a user-selected data provider and redistribution terms are approved.",
+        "Paper proposal includes assumptions, data timestamp, risk inputs, and explicit paper label; no broker credentials or live order endpoint exists.",
+        "Paper ledger acknowledges simulation limits and stale/out-of-session/missing data cannot trigger a fresh numerical condition."
+      ],
+      "verification": [
+        "Deterministic replay with out-of-order ticks, duplicates, stale prices, symbol/venue mismatch, unit errors, and market-session boundaries.",
+        "Threshold crossing produces one paper event; screenshot OCR price alone never qualifies.",
+        "Source inspection and network test prove no live order route is exposed."
+      ],
+      "estimate": "4-8 first-pass work-unit hours; NOT an alpha completion estimate; assumption: 8 bounded 30-60 minute work units, prepared environment and fixtures; integration waits/rework excluded",
+      "gate": "G4t: numeric alert and paper-proposal behavior is verified; live execution remains out of scope.",
+      "deliverable": "Add structured market conditions and paper-only trade proposals",
+      "work_units": [
+        {
+          "title": "Define timestamped data schema",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Build replay adapter",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Validate symbols/units/freshness",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Implement numeric crossings",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Create paper proposal schema",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Build paper-only panel",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Test replay edge cases",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Verify no broker execution path",
+          "estimate": "30-60 minutes"
+        }
+      ],
+      "requirement_ids": [
+        "OA-TRD-002",
+        "OA-TRD-003",
+        "OA-ALT-003"
+      ],
+      "phase_type": "initial"
+    },
+    {
+      "id": "OA-017",
+      "title": "Measure four-source behavior and close accessibility gaps",
+      "phase": "P5",
+      "depends_on": [
+        "OA-011",
+        "OA-012"
+      ],
+      "files": [
+        "tools/benchmarks/four-source.ts",
+        "tests/e2e/monitoring.spec.ts",
+        "tests/accessibility/dashboard.spec.ts",
+        "docs/benchmarks/reference-host.md",
+        "docs/testing-release.md"
+      ],
+      "acceptance": [
+        "Measure four-source 720p target previews, 2-second eligibility, one local request, frame age, queue depth, and resource usage on a named reference class.",
+        "Publish achieved results and delays; eligibility is not an analysis SLA and no claim of every-frame detection is made.",
+        "Keyboard, focus, contrast, labels, screen-reader announcements, 200% zoom, and reduced-motion checks cover core paths.",
+        "Stop/permission revocation, one-source outage, provider timeout, hot-unplug, suspend/resume, and a 30-minute soak have evidence. Stop blocks new work immediately, acknowledges/ceases acquisition within 1 second, and tears down app-owned resources within 2 seconds on the reference scenario."
+      ],
+      "verification": [
+        "Synthetic deterministic scheduler/load suite on all CI OS targets.",
+        "Windows native opt-in run records preview and analysis separately, including stop latency and released handles.",
+        "Playwright/axe automation plus manual keyboard/screen-reader session; findings are tracked before release."
+      ],
+      "estimate": "4-8 first-pass work-unit hours; NOT an alpha completion estimate; assumption: 8 bounded 30-60 minute work units, prepared environment and fixtures; integration waits/rework excluded",
+      "gate": "G5a: reference baseline, stop behavior, and core accessibility evidence accepted.",
+      "deliverable": "Measure four-source behavior and close accessibility gaps",
+      "work_units": [
+        {
+          "title": "Create benchmark recorder",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Add four-source synthetic scenario",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Test provider/source fault combinations",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Measure stop and handle cleanup",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Run Windows reference benchmark",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Run accessible keyboard flows",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Run screen-reader/zoom review",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Publish results and residual gaps",
+          "estimate": "30-60 minutes"
+        }
+      ],
+      "requirement_ids": [
+        "OA-SRC-002",
+        "OA-SRC-004",
+        "OA-AI-001",
+        "OA-AI-002",
+        "OA-AI-005",
+        "OA-CTL-003",
+        "OA-ACC-001"
+      ],
+      "phase_type": "initial"
+    },
+    {
+      "id": "OA-018",
+      "title": "Package and release an auditable Windows alpha",
+      "phase": "P5",
+      "depends_on": [
+        "OA-005",
+        "OA-009",
+        "OA-011",
+        "OA-012",
+        "OA-017"
+      ],
+      "files": [
+        ".github/workflows/ci.yml",
+        ".github/workflows/release.yml",
+        "apps/desktop/electron-builder.yml",
+        "SECURITY.md",
+        "THIRD_PARTY_NOTICES.md",
+        "docs/testing-release.md"
+      ],
+      "acceptance": [
+        "Create a versioned Windows alpha artifact with a clean-install/uninstall check and data-retention behavior documented.",
+        "Publish MIT license, notices, dependency/model license inventory, SBOM, checksums, and release notes that distinguish shipped and deferred adapters.",
+        "Sign only with verified maintainer credentials; if unavailable, label the unsigned alpha and document OS warnings without suggesting bypasses.",
+        "No automatic update is enabled until signature, provenance, downgrade, and interrupted-update tests pass; publish a supported security-reporting and patch process."
+      ],
+      "verification": [
+        "Linux/macOS/Windows mock/unit/type/build CI; native capture lane is Windows and opt-in, not represented as passed on hosted mocks.",
+        "Review artifacts for credentials, real feeds, private paths, bundled model weights, and unwanted OBS components.",
+        "Clean Windows install/run/stop/uninstall plus artifact checksum/provenance validation; publish release only after G5 approval."
+      ],
+      "estimate": "4-8 first-pass work-unit hours; NOT an alpha completion estimate; assumption: 8 bounded 30-60 minute work units, prepared environment and fixtures; integration waits/rework excluded",
+      "gate": "G5: release checklist and maintainer approval pass; public repo creation alone is not an app release.",
+      "deliverable": "Package and release an auditable Windows alpha",
+      "work_units": [
+        {
+          "title": "Define CI mock/build matrix",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Add opt-in native/live jobs",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Create Windows packaging config",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Generate notices and SBOM",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Add version/checksum/provenance output",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Document patch and update policy",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Run clean Windows acceptance",
+          "estimate": "30-60 minutes"
+        },
+        {
+          "title": "Review release evidence and notes",
+          "estimate": "30-60 minutes"
+        }
+      ],
+      "requirement_ids": [
+        "OA-CTL-004",
+        "OA-DAT-003",
+        "OA-ACC-001"
+      ],
+      "phase_type": "initial"
+    },
+    {
+      "id": "OA-019",
+      "title": "Add a verified Ollama vision adapter",
+      "phase": "later",
+      "phase_type": "later",
+      "depends_on": [
+        "OA-005",
+        "OA-006",
+        "OA-008"
+      ],
+      "files": [
+        "packages/providers/src/ollama/discovery.ts",
+        "packages/providers/src/ollama/inference.ts",
+        "tests/providers/ollama.spec.ts",
+        "docs/integrations.md"
+      ],
+      "acceptance": [
+        "Choose and evidence one image-capable Ollama model/API path; advertised capability alone does not enable monitoring.",
+        "Use shared masked-frame, model-identity, freshness, cancellation, timeout, and parse contracts; local request destinations are explicit.",
+        "Selecting this adapter requires a user-started image probe and explicit resume; no fallback sends frames to cloud.",
+        "Document tested server/model versions and model license; installation does not automatically download weights."
+      ],
+      "verification": [
+        "Shared provider conformance suite with discovery/image/stream parsing/error fixtures.",
+        "Opt-in synthetic live vision request, stop during request, and model unload/change test."
+      ],
+      "requirement_ids": [
+        "OA-MOD-001",
+        "OA-MOD-002",
+        "OA-MOD-004",
+        "OA-AI-003",
+        "OA-AI-006",
+        "OA-DAT-004"
+      ],
+      "estimate": "TBD after the prerequisite capability/authorization spike; excluded from initial work-unit budget. Split the implementation into 30-60 minute work units after evidence.",
+      "gate": "L1: chosen Ollama model, API, and license pass capability evidence and adapter conformance.",
+      "deliverable": "Add a verified Ollama vision adapter",
+      "work_units": [
+        {
+          "title": "Record chosen capability, permissions, and current primary-source evidence",
+          "estimate": "30-60 minute discovery unit; implementation estimate TBD"
+        },
+        {
+          "title": "Produce synthetic contract/negative-test fixture and a bounded implementation breakdown",
+          "estimate": "30-60 minute planning unit; implementation estimate TBD"
+        },
+        {
+          "title": "Review gate evidence and decide pass, defer, or changes required before external effects",
+          "estimate": "30-60 minute review unit; implementation estimate TBD"
+        }
+      ]
+    },
+    {
+      "id": "OA-020",
+      "title": "Add a consented OpenRouter vision adapter",
+      "phase": "later",
+      "phase_type": "later",
+      "depends_on": [
+        "OA-005",
+        "OA-006",
+        "OA-008"
+      ],
+      "files": [
+        "packages/providers/src/openrouter/discovery.ts",
+        "packages/providers/src/openrouter/inference.ts",
+        "packages/core/src/policy/cloud-budget.ts",
+        "tests/providers/openrouter.spec.ts",
+        "docs/integrations.md"
+      ],
+      "acceptance": [
+        "Choose one documented vision model/route and display provider/model identity, billing destination, and source scope before first upload.",
+        "Secrets remain in OS credentials; saving a profile does not authorize frame export or start monitoring.",
+        "Apply bounded image/request/token budget, retry ceiling, and spend guard; do not change upstream route/destination silently.",
+        "Surface unsupported modality, rate limits, refusal, quota, and server errors while preserving preview and unknown status."
+      ],
+      "verification": [
+        "Mock conformance tests for image payload, model identity, route change, 429/refusal/timeout, and redaction.",
+        "Zero-egress test with consent off; opt-in synthetic smoke reports actual requests and cost without personal feeds."
+      ],
+      "requirement_ids": [
+        "OA-MOD-004",
+        "OA-DAT-003",
+        "OA-DAT-004",
+        "OA-DAT-005",
+        "OA-AI-006"
+      ],
+      "estimate": "TBD after the prerequisite capability/authorization spike; excluded from initial work-unit budget. Split the implementation into 30-60 minute work units after evidence.",
+      "gate": "L2: selected model/route terms, privacy destination, spend consent, and synthetic smoke accepted.",
+      "deliverable": "Add a consented OpenRouter vision adapter",
+      "work_units": [
+        {
+          "title": "Record chosen capability, permissions, and current primary-source evidence",
+          "estimate": "30-60 minute discovery unit; implementation estimate TBD"
+        },
+        {
+          "title": "Produce synthetic contract/negative-test fixture and a bounded implementation breakdown",
+          "estimate": "30-60 minute planning unit; implementation estimate TBD"
+        },
+        {
+          "title": "Review gate evidence and decide pass, defer, or changes required before external effects",
+          "estimate": "30-60 minute review unit; implementation estimate TBD"
+        }
+      ]
+    },
+    {
+      "id": "OA-021",
+      "title": "Add an OpenAI image-vision adapter",
+      "phase": "later",
+      "phase_type": "later",
+      "depends_on": [
+        "OA-005",
+        "OA-006",
+        "OA-008"
+      ],
+      "files": [
+        "packages/providers/src/openai/inference.ts",
+        "packages/providers/src/openai/capabilities.ts",
+        "tests/providers/openai.spec.ts",
+        "docs/integrations.md"
+      ],
+      "acceptance": [
+        "Select a currently documented image-capable API/model and record exact supported content shape; image analysis is not described as continuous video understanding.",
+        "Use the shared observation schema, source evidence, context budget, frame masks, and explicit cloud destination consent.",
+        "API billing and credentials are separate from ChatGPT application subscriptions; profile selection never uploads frames by itself.",
+        "Bound spend/retries/concurrency and handle refusals/unsupported images/timeout; no unverified realtime video/voice behavior is required."
+      ],
+      "verification": [
+        "Official documented schema fixture review and shared mock provider conformance suite.",
+        "Consent-denial, redaction, cancel/late-result, rate-limit and budget tests; opt-in synthetic live image check."
+      ],
+      "requirement_ids": [
+        "OA-MOD-004",
+        "OA-DAT-003",
+        "OA-DAT-004",
+        "OA-DAT-005",
+        "OA-AI-003",
+        "OA-AI-006"
+      ],
+      "estimate": "TBD after the prerequisite capability/authorization spike; excluded from initial work-unit budget. Split the implementation into 30-60 minute work units after evidence.",
+      "gate": "L3: current API/model capability, privacy/billing choice, and consent/budget gates pass.",
+      "deliverable": "Add an OpenAI image-vision adapter",
+      "work_units": [
+        {
+          "title": "Record chosen capability, permissions, and current primary-source evidence",
+          "estimate": "30-60 minute discovery unit; implementation estimate TBD"
+        },
+        {
+          "title": "Produce synthetic contract/negative-test fixture and a bounded implementation breakdown",
+          "estimate": "30-60 minute planning unit; implementation estimate TBD"
+        },
+        {
+          "title": "Review gate evidence and decide pass, defer, or changes required before external effects",
+          "estimate": "30-60 minute review unit; implementation estimate TBD"
+        }
+      ]
+    },
+    {
+      "id": "OA-022",
+      "title": "Add one evidenced NVIDIA model deployment adapter",
+      "phase": "later",
+      "phase_type": "later",
+      "depends_on": [
+        "OA-005",
+        "OA-006",
+        "OA-008"
+      ],
+      "files": [
+        "packages/providers/src/nvidia/discovery.ts",
+        "packages/providers/src/nvidia/inference.ts",
+        "tests/providers/nvidia.spec.ts",
+        "docs/integrations.md",
+        "docs/decisions.md"
+      ],
+      "acceptance": [
+        "Choose one local or hosted NVIDIA deployment/model; record hardware, endpoint, license, authentication, and exact image/video capability.",
+        "Local vs cloud label derives from actual endpoint/data destination, not the NVIDIA brand.",
+        "Implement the common bounded image observation path only after capability probe; video support remains separate until evidenced.",
+        "No bundled proprietary runtime/model redistribution or hidden cloud fallback; unsupported host/model yields actionable status."
+      ],
+      "verification": [
+        "Schema/model evidence from primary documentation; synthetic capability probe on chosen deployment.",
+        "Mock tests for auth, image support, unavailable model, timeout, budget/consent, and credential redaction."
+      ],
+      "requirement_ids": [
+        "OA-MOD-004",
+        "OA-DAT-003",
+        "OA-DAT-004",
+        "OA-DAT-005",
+        "OA-AI-003",
+        "OA-AI-006"
+      ],
+      "estimate": "TBD after the prerequisite capability/authorization spike; excluded from initial work-unit budget. Split the implementation into 30-60 minute work units after evidence.",
+      "gate": "L4: specific deployment/model/license and host readiness approved before implementation.",
+      "deliverable": "Add one evidenced NVIDIA model deployment adapter",
+      "work_units": [
+        {
+          "title": "Record chosen capability, permissions, and current primary-source evidence",
+          "estimate": "30-60 minute discovery unit; implementation estimate TBD"
+        },
+        {
+          "title": "Produce synthetic contract/negative-test fixture and a bounded implementation breakdown",
+          "estimate": "30-60 minute planning unit; implementation estimate TBD"
+        },
+        {
+          "title": "Review gate evidence and decide pass, defer, or changes required before external effects",
+          "estimate": "30-60 minute review unit; implementation estimate TBD"
+        }
+      ]
+    },
+    {
+      "id": "OA-023",
+      "title": "Build a scoped action proposal and grant broker",
+      "phase": "later",
+      "phase_type": "later",
+      "depends_on": [
+        "OA-005",
+        "OA-012",
+        "OA-017"
+      ],
+      "files": [
+        "packages/actions/src/proposal.ts",
+        "packages/actions/src/grant-broker.ts",
+        "packages/contracts/src/action.ts",
+        "apps/desktop/src/renderer/actions/ApprovalPanel.tsx",
+        "tests/actions/grants.spec.ts"
+      ],
+      "acceptance": [
+        "Default observation mode exposes no executable actions. A dry-run proposal names target app/session, intended steps, effect categories, expiration, and current evidence.",
+        "Approval creates a narrow auditable grant for exactly the displayed proposal; unrelated commands, messages, accounts, targets, or added steps require separate approval.",
+        "Feed/MCP/model content is untrusted input and cannot grant itself authority; only an explicit user interaction creates a grant.",
+        "Revocation/global stop, stale evidence, changed target, edited proposal, or expired grant invalidates execution eligibility and records reason.",
+        "Proposal default expiry is 30 seconds; human approval never indefinitely pins an operation. Require fresh <=2-second action evidence and reinspection of unchanged target/operation immediately before dispatch."
+      ],
+      "verification": [
+        "Synthetic proposal/grant state-machine tests with replay, edited payload, target change, forged model approval, expiry, and stop races.",
+        "Accessible keyboard/screen-reader approval flow; assert no action worker/external effects in this broker slice.",
+        "Fake human approval latency and target/operation edits expire/invalidate the grant; refreshed evidence requires a revised proposal rather than silently changing the approved request."
+      ],
+      "requirement_ids": [
+        "OA-ACT-001",
+        "OA-ACT-002",
+        "OA-ACT-003",
+        "OA-CTL-003",
+        "OA-ACC-001"
+      ],
+      "estimate": "TBD after the prerequisite capability/authorization spike; excluded from initial work-unit budget. Split the implementation into 30-60 minute work units after evidence.",
+      "gate": "L5: threat model, effect categories, approval UI, and negative authorization tests reviewed.",
+      "deliverable": "Build a scoped action proposal and grant broker",
+      "work_units": [
+        {
+          "title": "Record chosen capability, permissions, and current primary-source evidence",
+          "estimate": "30-60 minute discovery unit; implementation estimate TBD"
+        },
+        {
+          "title": "Produce synthetic contract/negative-test fixture and a bounded implementation breakdown",
+          "estimate": "30-60 minute planning unit; implementation estimate TBD"
+        },
+        {
+          "title": "Review gate evidence and decide pass, defer, or changes required before external effects",
+          "estimate": "30-60 minute review unit; implementation estimate TBD"
+        }
+      ]
+    },
+    {
+      "id": "OA-024",
+      "title": "Execute one granted Windows action against a disposable app",
+      "phase": "later",
+      "phase_type": "later",
+      "depends_on": [
+        "OA-023",
+        "OA-014"
+      ],
+      "files": [
+        "packages/actions/src/windows/worker.ts",
+        "packages/actions/src/windows/target-identity.ts",
+        "packages/actions/src/audit.ts",
+        "tests/native/windows-actions.spec.ts",
+        "docs/integrations.md"
+      ],
+      "acceptance": [
+        "Choose an evidenced Windows automation backend and initially support one allowlisted action against a disposable test app.",
+        "Worker rechecks active target identity/current state and grant before each material step; it does not guess through stale screenshots or changed windows.",
+        "Stop/revocation interrupts pending work, attempts cooperative cancellation of in-progress action, and records actual partial effects without promising an already completed effect can be undone.",
+        "Arbitrary shell execution, messages, broker orders, elevated/protected windows, and new effect categories remain disabled unless separately designed and granted."
+      ],
+      "verification": [
+        "Controlled native test app tests granted click/type plus denied/expired grant, focus/geometry change, target close, permission loss, duplicate dispatch, and emergency stop.",
+        "Audit replay compares requested/performed steps and target; inspection proves no free-form execute route exists.",
+        "Approval delayed beyond evidence/proposal limit triggers reinspection and revised approval; unchanged target with changed operation is rejected, not silently executed."
+      ],
+      "requirement_ids": [
+        "OA-ACT-001",
+        "OA-ACT-002",
+        "OA-ACT-003",
+        "OA-CTL-003",
+        "OA-DAT-003"
+      ],
+      "estimate": "TBD after the prerequisite capability/authorization spike; excluded from initial work-unit budget. Split the implementation into 30-60 minute work units after evidence.",
+      "gate": "L6: Windows backend/target fidelity and action-specific safety evidence pass; actual personal-app use requires explicit grants.",
+      "deliverable": "Execute one granted Windows action against a disposable app",
+      "work_units": [
+        {
+          "title": "Record chosen capability, permissions, and current primary-source evidence",
+          "estimate": "30-60 minute discovery unit; implementation estimate TBD"
+        },
+        {
+          "title": "Produce synthetic contract/negative-test fixture and a bounded implementation breakdown",
+          "estimate": "30-60 minute planning unit; implementation estimate TBD"
+        },
+        {
+          "title": "Review gate evidence and decide pass, defer, or changes required before external effects",
+          "estimate": "30-60 minute review unit; implementation estimate TBD"
+        }
+      ]
+    },
+    {
+      "id": "OA-025",
+      "title": "Model a broker sandbox and paper-order lifecycle",
+      "phase": "later",
+      "phase_type": "later",
+      "depends_on": [
+        "OA-016",
+        "OA-023"
+      ],
+      "files": [
+        "packages/core/src/trading/order-state.ts",
+        "packages/providers/src/broker/sandbox.ts",
+        "packages/storage/src/paper-orders.ts",
+        "apps/desktop/src/renderer/trading/OrderReview.tsx",
+        "tests/trading/order-replay.spec.ts"
+      ],
+      "acceptance": [
+        "Select one broker's official sandbox/replay contract; user-approved data/broker terms and account scope are prerequisites, not implied by chart monitoring.",
+        "Immutable proposed order specifies account/environment, symbol/venue, side/type, quantity units, price limits, expiry, fees/risk assumptions, and evidence time.",
+        "Paper/sandbox send requires an explicit environment-labeled review; acknowledgment/fill/reject/cancel/partial-fill states use durable idempotency and reconciliation.",
+        "No real-money credential or production endpoint can be configured in this slice; unknown order outcome never triggers blind retry."
+      ],
+      "verification": [
+        "Replay tests cover stale data, exact decimal/unit validation, partial fills, duplicate requests/events, timeout before/after acknowledgement, reject/cancel races, and disconnect/reconcile.",
+        "Synthetic sandbox network allowlist test rejects production endpoint/account; paper/sandbox labels survive exports."
+      ],
+      "requirement_ids": [
+        "OA-TRD-002",
+        "OA-TRD-003",
+        "OA-ACT-001",
+        "OA-ACT-003",
+        "OA-DAT-003",
+        "OA-TRD-004"
+      ],
+      "estimate": "TBD after the prerequisite capability/authorization spike; excluded from initial work-unit budget. Split the implementation into 30-60 minute work units after evidence.",
+      "gate": "L7: chosen broker sandbox/data permissions, order contract, idempotency, and environment isolation approved.",
+      "deliverable": "Model a broker sandbox and paper-order lifecycle",
+      "work_units": [
+        {
+          "title": "Record chosen capability, permissions, and current primary-source evidence",
+          "estimate": "30-60 minute discovery unit; implementation estimate TBD"
+        },
+        {
+          "title": "Produce synthetic contract/negative-test fixture and a bounded implementation breakdown",
+          "estimate": "30-60 minute planning unit; implementation estimate TBD"
+        },
+        {
+          "title": "Review gate evidence and decide pass, defer, or changes required before external effects",
+          "estimate": "30-60 minute review unit; implementation estimate TBD"
+        }
+      ]
+    },
+    {
+      "id": "OA-026",
+      "title": "Design and separately gate live-order authorization and reconciliation",
+      "phase": "later",
+      "phase_type": "later",
+      "depends_on": [
+        "OA-025",
+        "OA-023",
+        "OA-018"
+      ],
+      "files": [
+        "packages/core/src/trading/live-policy.ts",
+        "packages/providers/src/broker/live.ts",
+        "packages/contracts/src/live-order.ts",
+        "docs/security-privacy.md",
+        "docs/decisions.md",
+        "tests/trading/live-policy.spec.ts"
+      ],
+      "acceptance": [
+        "This slice starts with design/review and production execution disabled; any real-account connectivity or order requires separate explicit user authorization.",
+        "Approved immutable order names real account, instrument, direction, quantity, type/limit, expiration, maximum exposure, and source freshness; changed fields invalidate approval.",
+        "Define account/broker-position reconciliation, unique client IDs, ambiguous-outcome handling, duplicate-order defenses, partial fills, cancel failure, market/session rules, and audit retention before enabling execution.",
+        "Stop blocks new orders and cancels queued work; it does not claim existing broker orders/fills are reversed. Cancel/flatten actions need explicit account/effect grants.",
+        "Independent financial-domain, security, and broker API review plus controlled authorized acceptance are required; model observations alone cannot authorize trades."
+      ],
+      "verification": [
+        "Default-off and unauthorized-live-endpoint negative tests using synthetic replay; no live credentials or orders in public CI.",
+        "Failure model/reconciliation tabletop for unknown outcome, outage, position drift, duplicates, stop and cancellation race.",
+        "Only after a new explicit authorization: broker-supported controlled acceptance with approved limits and documented outcomes."
+      ],
+      "requirement_ids": [
+        "OA-TRD-002",
+        "OA-ACT-001",
+        "OA-ACT-002",
+        "OA-ACT-003",
+        "OA-DAT-003",
+        "OA-TRD-004"
+      ],
+      "estimate": "TBD after the prerequisite capability/authorization spike; excluded from initial work-unit budget. Split the implementation into 30-60 minute work units after evidence.",
+      "gate": "L8: separate product scope, broker/account authorization, risk limits, independent review, and release approval; no live execution under current request.",
+      "deliverable": "Design and separately gate live-order authorization and reconciliation",
+      "work_units": [
+        {
+          "title": "Record chosen capability, permissions, and current primary-source evidence",
+          "estimate": "30-60 minute discovery unit; implementation estimate TBD"
+        },
+        {
+          "title": "Produce synthetic contract/negative-test fixture and a bounded implementation breakdown",
+          "estimate": "30-60 minute planning unit; implementation estimate TBD"
+        },
+        {
+          "title": "Review gate evidence and decide pass, defer, or changes required before external effects",
+          "estimate": "30-60 minute review unit; implementation estimate TBD"
+        }
+      ]
+    }
+  ],
+  "requirement_coverage": {
+    "OA-AI-003": [
+      "OA-001",
+      "OA-007",
+      "OA-008",
+      "OA-019",
+      "OA-021",
+      "OA-022"
+    ],
+    "OA-MOD-003": [
+      "OA-001",
+      "OA-007",
+      "OA-010"
+    ],
+    "OA-CTL-003": [
+      "OA-002",
+      "OA-004",
+      "OA-013",
+      "OA-014",
+      "OA-015",
+      "OA-017",
+      "OA-023",
+      "OA-024"
+    ],
+    "OA-CTL-004": [
+      "OA-002",
+      "OA-004",
+      "OA-009",
+      "OA-018"
+    ],
+    "OA-DAT-003": [
+      "OA-002",
+      "OA-005",
+      "OA-009",
+      "OA-015",
+      "OA-018",
+      "OA-020",
+      "OA-021",
+      "OA-022",
+      "OA-024",
+      "OA-025",
+      "OA-026"
+    ],
+    "OA-SRC-001": [
+      "OA-003",
+      "OA-014",
+      "OA-015"
+    ],
+    "OA-SRC-004": [
+      "OA-003",
+      "OA-017"
+    ],
+    "OA-SRC-002": [
+      "OA-004",
+      "OA-017"
+    ],
+    "OA-SRC-003": [
+      "OA-004",
+      "OA-010",
+      "OA-014",
+      "OA-015"
+    ],
+    "OA-CTL-001": [
+      "OA-004"
+    ],
+    "OA-CTL-002": [
+      "OA-004",
+      "OA-012"
+    ],
+    "OA-DAT-001": [
+      "OA-005",
+      "OA-009"
+    ],
+    "OA-DAT-004": [
+      "OA-005",
+      "OA-019",
+      "OA-020",
+      "OA-021",
+      "OA-022"
+    ],
+    "OA-DAT-005": [
+      "OA-005",
+      "OA-010",
+      "OA-014",
+      "OA-020",
+      "OA-021",
+      "OA-022"
+    ],
+    "OA-AI-001": [
+      "OA-006",
+      "OA-017"
+    ],
+    "OA-AI-002": [
+      "OA-006",
+      "OA-008",
+      "OA-011",
+      "OA-017"
+    ],
+    "OA-AI-004": [
+      "OA-006",
+      "OA-008",
+      "OA-010",
+      "OA-012"
+    ],
+    "OA-AI-005": [
+      "OA-006",
+      "OA-017"
+    ],
+    "OA-CHAT-002": [
+      "OA-006",
+      "OA-012"
+    ],
+    "OA-MOD-001": [
+      "OA-007",
+      "OA-019"
+    ],
+    "OA-MOD-002": [
+      "OA-007",
+      "OA-008",
+      "OA-019"
+    ],
+    "OA-AI-006": [
+      "OA-008",
+      "OA-019",
+      "OA-020",
+      "OA-021",
+      "OA-022"
+    ],
+    "OA-ALT-005": [
+      "OA-009",
+      "OA-011"
+    ],
+    "OA-DAT-002": [
+      "OA-009"
+    ],
+    "OA-ACT-001": [
+      "OA-010",
+      "OA-023",
+      "OA-024",
+      "OA-025",
+      "OA-026"
+    ],
+    "OA-ALT-001": [
+      "OA-011"
+    ],
+    "OA-ALT-002": [
+      "OA-011"
+    ],
+    "OA-ALT-003": [
+      "OA-011",
+      "OA-016"
+    ],
+    "OA-ALT-004": [
+      "OA-011"
+    ],
+    "OA-CHAT-001": [
+      "OA-012",
+      "OA-013"
+    ],
+    "OA-CHAT-003": [
+      "OA-012"
+    ],
+    "OA-TRD-001": [
+      "OA-012"
+    ],
+    "OA-ACC-001": [
+      "OA-013",
+      "OA-017",
+      "OA-018",
+      "OA-023"
+    ],
+    "OA-SRC-005": [
+      "OA-014",
+      "OA-015"
+    ],
+    "OA-TRD-002": [
+      "OA-016",
+      "OA-025",
+      "OA-026"
+    ],
+    "OA-TRD-003": [
+      "OA-016",
+      "OA-025"
+    ],
+    "OA-MOD-004": [
+      "OA-019",
+      "OA-020",
+      "OA-021",
+      "OA-022"
+    ],
+    "OA-ACT-002": [
+      "OA-023",
+      "OA-024",
+      "OA-026"
+    ],
+    "OA-ACT-003": [
+      "OA-023",
+      "OA-024",
+      "OA-025",
+      "OA-026"
+    ],
+    "OA-TRD-004": [
+      "OA-025",
+      "OA-026"
+    ]
+  }
+}

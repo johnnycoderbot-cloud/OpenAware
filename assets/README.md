@@ -1,0 +1,5 @@
+# Concept asset
+
+`app-concept.png` is an AI-generated planning illustration requested by the project owner. It shows an earlier working title (Desktop AI), illustrative trading data, synthetic camera views, and proposed computer-action controls. It is not a screenshot of a shipped app or evidence of integration performance.
+
+Original OpenAware documentation and this illustration are offered under the repository's MIT license to the extent applicable. Product names/logos depicted remain the property of their respective owners; no affiliation or endorsement is implied. No real desktop, personal camera feed, account, or credentials are shown.
