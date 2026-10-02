@@ -1,6 +1,6 @@
-# OpenAware v0.2 developer prototype
+# OpenAware v0.2.1 developer prototype
 
-This build implements a usable desktop application against the full [release roadmap](roadmap.md). Version 0.2 aligns the dashboard with the generated concept and adds background monitoring with tray controls. It does not complete every milestone or establish production support for every Windows device, model, Bionic version, or application.
+This build implements a usable desktop application against the full [release roadmap](roadmap.md). Version 0.2.1 fixes desktop permission handling through isolated capture workers and adds a recognizable blue OpenAware tray/app icon, retaining the v0.2 layout and background controls. It does not complete every milestone or establish production support for every Windows device, model, Bionic version, or application.
 
 ## Implemented boundary
 
@@ -18,9 +18,9 @@ The experimental input broker compares unchanged full-monitor thumbnails downsam
 ## Run and configure
 
 1. Install Node.js 24 or later and run `npm ci`, then `npm start` from the repository.
-2. Add a synthetic demo to inspect the interface without personal capture, or explicitly choose a real source.
+2. For a live screen, click **Add source**, choose **Monitor**, select the screen, add it, and click **Connect** on its source tile. Repeat for a second monitor. **Window** captures a chosen application; **Demo** is synthetic content only. Live preview needs no model and does not require **Start watching**.
 3. Start your local model server: LM Studio normally uses `http://127.0.0.1:1234`; Ollama normally uses `http://127.0.0.1:11434`.
-4. In Connections, discover models, select a vision-capable model, and run the displayed synthetic test. Start monitoring only after verified readiness.
+4. In Connections, discover models, select a vision-capable model, and run the displayed synthetic test. Click **Start watching** for AI monitoring only after verified readiness. This step is separate from connecting a live preview.
 5. Scope questions to source chips. Operator planning needs a live selected monitor and verified local model. Native action review is per step; the emergency shortcut is Ctrl+Shift+F12 if available.
 6. Click **Background** to continue the configured session with the dashboard hidden. Tray **Show OpenAware** preserves that preference; click **Window mode** to clear it. Tray Stop releases feeds and pending authority; Quit exits. See [background mode](background-mode.md).
 
@@ -28,12 +28,14 @@ Configuration, tokens, and history are memory only. Neither launch flag selects 
 
 ## Evidence and remaining gates
 
-Source checks exercise strict TypeScript compilation, unit/integration contracts, synthetic Electron workflows, hidden capture and inference continuity, desktop visibility, headless idle startup, close behavior, and Quit. The production tray test inspects the real menu and invokes installed Show/Stop/Quit callbacks; it does not simulate physical tray clicks. Visual fixtures use the actual Electron renderer with synthetic content. Final counts, package checks, and review corrections are recorded in the [v0.2 implementation ledger](../.omx/logs/implementation-v0.2.md).
+Source checks exercise strict TypeScript compilation, unit/integration contracts, synthetic Electron workflows, hidden capture and inference continuity, desktop visibility, headless idle startup, close behavior, and Quit. The production tray test inspects the real menu and invokes installed Show/Stop/Quit callbacks; it does not simulate physical tray clicks. Visual fixtures use the actual Electron renderer with synthetic content. Version 0.2.1 adds a controlled regression using two native windows containing only generated test content, to exercise real Electron display acquisition without personal screen capture. Its reproduction, results, final counts, and packaged checks are recorded in the [v0.2.1 implementation ledger](../.omx/logs/implementation-v0.2.1.md).
+
+Each selected desktop source is owned by a fixed hidden capture document with a separate nonpersistent session, no preload, Node, IPC, navigation or network access. Its one-shot selector enforces the exact chosen source and rejects audio. The dashboard denies direct modern and legacy desktop media requests and receives only bounded decoded JPEG preview packets with the original timestamp and an opaque connection token. Privacy masks remain on analysis images; source dimensions retain native geometry. Stop invalidates pending starts and destroys capture owners. A controlled native-window result does not establish successful capture of the user's monitors or mixed-DPI desktop; those still require a user retry and hardware acceptance evidence. The [v0.2 ledger](../.omx/logs/implementation-v0.2.md) preserves the prior layout and tray checks.
 
 The earlier [v0.1 ledger](../.omx/logs/implementation-v0.1.md) preserves the first build's accepted checks. Mock model responses and synthetic sources do not prove real model vision, actual camera negotiation, native inputs, mixed-DPI placement, sleep/lock behavior, or sustained performance.
 
-Not implemented in v0.2: Bionic MCP pairing or embedded UI, automatic host model-picker synchronization, cloud providers, voice, IP camera, persisted encrypted setup/history, automatic source restoration, semantic/group rule editors, broker integration, unattended action grants, general shell execution, auto-update, and signed distribution. Background mode depends on an interactive desktop and an available system tray. Chart conversation can describe sampled pixels but exact trading rules require the future structured-data adapter. Implementation issues remain open until their complete gate is evidenced.
+Not implemented in v0.2.1: Bionic MCP pairing or embedded UI, automatic host model-picker synchronization, cloud providers, voice, IP camera, persisted encrypted setup/history, automatic source restoration, semantic/group rule editors, broker integration, unattended action grants, general shell execution, auto-update, and signed distribution. Background mode depends on an interactive desktop and an available system tray. Chart conversation can describe sampled pixels but exact trading rules require the future structured-data adapter. Implementation issues remain open until their complete gate is evidenced.
 
 ## Build artifacts
 
-`npm run package:dir` builds an unpacked application; `npm run package` builds a Windows NSIS installer. The [v0.2.0 developer prerelease](https://github.com/johnnycoderbot-cloud/OpenAware/releases/tag/v0.2.0) provides the unsigned installer and checksum; refer to its ledger for packaged test evidence. The installer itself has not been exercised. The [v0.1.0 prerelease](https://github.com/johnnycoderbot-cloud/OpenAware/releases/tag/v0.1.0) remains historical. Generated `dist`, `release`, recordings, credentials, and local OMX state are excluded from Git. Packaging does not imply signing or Windows release acceptance.
+`npm run package:dir` builds an unpacked application; `npm run package` builds a Windows NSIS installer. The [v0.2.1 developer prerelease](https://github.com/johnnycoderbot-cloud/OpenAware/releases/tag/v0.2.1) provides the unsigned installer and checksum; refer to its ledger for packaged test evidence. The installer itself has not been exercised. The [v0.2.0](https://github.com/johnnycoderbot-cloud/OpenAware/releases/tag/v0.2.0) and [v0.1.0](https://github.com/johnnycoderbot-cloud/OpenAware/releases/tag/v0.1.0) prereleases remain historical. Generated `dist`, `release`, recordings, credentials, and local OMX state are excluded from Git. Packaging does not imply signing or Windows release acceptance.

@@ -899,7 +899,10 @@ function SourceTile({
     const draw = () => {
       const canvas = canvasRef.current;
       if (canvas && info.canvas) {
-        if (canvas.width !== info.canvas.width) {
+        if (
+          canvas.width !== info.canvas.width ||
+          canvas.height !== info.canvas.height
+        ) {
           canvas.width = info.canvas.width;
           canvas.height = info.canvas.height;
         }
@@ -960,7 +963,11 @@ function SourceTile({
         ) : info?.canvas ? (
           <canvas
             ref={canvasRef}
-            aria-label="Animated synthetic demo preview"
+            aria-label={
+              source.kind === "demo"
+                ? "Animated synthetic demo preview"
+                : `${source.name} live preview`
+            }
           />
         ) : (
           <div className="preview-off">

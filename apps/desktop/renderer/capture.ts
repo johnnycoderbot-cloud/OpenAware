@@ -1,4 +1,6 @@
 import type {
+  DesktopCaptureError,
+  DesktopCaptureFrame,
   Frame,
   Mask,
   OpenAwareBridge,
@@ -14,9 +16,20 @@ export interface CaptureInfo {
 }
 interface Pipeline {
   id: string;
+  captureId?: string;
+  deviceId?: string;
   stream?: MediaStream;
   video?: HTMLVideoElement;
   demo?: HTMLCanvasElement;
+  nativeWidth?: number;
+  nativeHeight?: number;
+  fps?: number;
+  pendingFrame?: DesktopCaptureFrame;
+  decoding?: boolean;
+  receivedSequence: number;
+  firstDesktopFrame?: Promise<void>;
+  firstDesktopFrameReady?: () => void;
+  firstDesktopFrameTimer?: ReturnType<typeof setTimeout>;
   timer?: ReturnType<typeof setInterval>;
   animation?: number;
   decodedCallback?: number;
@@ -80,13 +93,35 @@ export function createProbe(source: Source): Frame {
 
 export class CaptureManager {
   private pipelines = new Map<string, Pipeline>();
-  private desktopSelection: Promise<void> = Promise.resolve();
+  private unsubscribeDesktopFrame: () => void;
+  private unsubscribeDesktopError: () => void;
   constructor(
     private bridge: OpenAwareBridge,
     private getSource: (id: string) => Source | undefined,
     private changed: () => void,
     private report: (message: string) => void,
-  ) {}
+  ) {
+    this.unsubscribeDesktopFrame = bridge.onDesktopFrame((frame) => {
+      const p = this.pipelines.get(frame.sourceId);
+      if (
+        !p ||
+        p.stopped ||
+        p.captureId !== frame.captureId ||
+        p.deviceId !== frame.deviceId ||
+        frame.sequence <= p.receivedSequence
+      )
+        return;
+      p.receivedSequence = frame.sequence;
+      // Keep only the latest packet while one JPEG is decoding. A slow dashboard
+      // cannot accumulate captured images or replay an old connection's pixels.
+      p.pendingFrame = frame;
+      void this.decodeDesktop(p);
+    });
+    this.unsubscribeDesktopError = bridge.onDesktopError((error) => {
+      const p = this.pipelines.get(error.sourceId);
+      if (p && p.captureId === error.captureId) this.desktopFailed(p, error);
+    });
+  }
   info(id: string): CaptureInfo | undefined {
     const p = this.pipelines.get(id);
     return (
@@ -120,6 +155,7 @@ export class CaptureManager {
       deliveredAt: 0,
       deliveredMonotonic: 0,
       deliverySequence: 0,
+      receivedSequence: 0,
       sampledSequence: 0,
       width: 0,
       height: 0,
@@ -143,35 +179,35 @@ export class CaptureManager {
           p.animation = requestAnimationFrame(animate);
         };
         animate();
+      } else if (source.kind === "monitor" || source.kind === "window") {
+        p.captureId = crypto.randomUUID();
+        p.deviceId = source.deviceId;
+        p.demo = document.createElement("canvas");
+        p.firstDesktopFrame = new Promise<void>((resolve) => {
+          p.firstDesktopFrameReady = resolve;
+        });
+        p.firstDesktopFrameTimer = setTimeout(() => {
+          this.desktopFailed(p, {
+            sourceId: p.id,
+            captureId: p.captureId!,
+            message: "The selected source did not provide a preview frame.",
+          });
+        }, 15_000);
+        // Only the fixed, isolated capture owner receives native desktop media.
+        // Its token also keeps a late stop or packet from affecting reconnect.
+        await this.bridge.startDesktopCapture(source.id, p.captureId);
+        if (p.stopped) return;
+        await p.firstDesktopFrame;
       } else {
-        let stream: MediaStream;
-        if (source.kind === "monitor" || source.kind === "window") {
-          // Electron's selection grant is one-shot; do not let two starts replace each other's target.
-          const acquire = this.desktopSelection.then(async () => {
-            if (p.stopped) throw new Error("Capture connection was stopped.");
-            await this.bridge.selectDesktopSource(source.deviceId);
-            if (p.stopped) throw new Error("Capture connection was stopped.");
-            return navigator.mediaDevices.getDisplayMedia({
-              video: true,
-              audio: false,
-            });
-          });
-          this.desktopSelection = acquire.then(
-            () => {},
-            () => {},
-          );
-          stream = await acquire;
-        } else {
-          stream = await navigator.mediaDevices.getUserMedia({
-            video: {
-              deviceId: { exact: source.deviceId },
-              width: { ideal: 1280 },
-              height: { ideal: 720 },
-              frameRate: { ideal: 15, max: 30 },
-            },
-            audio: false,
-          });
-        }
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            deviceId: { exact: source.deviceId },
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+            frameRate: { ideal: 15, max: 30 },
+          },
+          audio: false,
+        });
         if (p.stopped) {
           stream.getTracks().forEach((track) => track.stop());
           return;
@@ -211,8 +247,8 @@ export class CaptureManager {
           });
       }
       if (p.stopped) return;
-      p.width = p.video?.videoWidth || p.demo?.width || 0;
-      p.height = p.video?.videoHeight || p.demo?.height || 0;
+      p.width = p.nativeWidth || p.video?.videoWidth || p.demo?.width || 0;
+      p.height = p.nativeHeight || p.video?.videoHeight || p.demo?.height || 0;
       if (!p.width || !p.height)
         throw new Error("The selected source did not provide a video frame.");
       const settings = p.stream?.getVideoTracks()[0]?.getSettings();
@@ -227,7 +263,8 @@ export class CaptureManager {
           status: "live",
           width: p.width,
           height: p.height,
-          fps: settings?.frameRate || (p.demo ? 30 : 0),
+          fps:
+            settings?.frameRate || p.fps || (source.kind === "demo" ? 30 : 0),
           error: p.blocked
             ? "Source dimensions changed. Review privacy masks before analysis."
             : "",
@@ -262,6 +299,12 @@ export class CaptureManager {
     const p = this.pipelines.get(id);
     if (!p) return;
     p.stopped = true;
+    p.pendingFrame = undefined;
+    if (p.firstDesktopFrameTimer) clearTimeout(p.firstDesktopFrameTimer);
+    p.firstDesktopFrameReady?.();
+    p.firstDesktopFrameReady = undefined;
+    if (p.captureId)
+      void this.bridge.stopDesktopCapture(id, p.captureId).catch(() => {});
     if (p.timer) clearInterval(p.timer);
     if (p.animation) cancelAnimationFrame(p.animation);
     p.stream?.getTracks().forEach((track) => track.stop());
@@ -277,6 +320,80 @@ export class CaptureManager {
   stopAll() {
     for (const id of [...this.pipelines.keys()]) this.stop(id);
   }
+  dispose() {
+    this.stopAll();
+    this.unsubscribeDesktopFrame();
+    this.unsubscribeDesktopError();
+  }
+  private desktopFailed(p: Pipeline, error: DesktopCaptureError) {
+    if (p.stopped || this.pipelines.get(p.id) !== p) return;
+    this.stop(p.id);
+    const message = error.message.slice(0, 300);
+    void this.bridge
+      .invoke({
+        type: "source.update",
+        sourceId: p.id,
+        patch: { status: "unavailable", error: message },
+      })
+      .catch(() => {});
+    this.report(message);
+  }
+  private async decodeDesktop(p: Pipeline) {
+    if (p.decoding) return;
+    p.decoding = true;
+    try {
+      while (!p.stopped && p.pendingFrame) {
+        const frame = p.pendingFrame;
+        p.pendingFrame = undefined;
+        const image = new Image();
+        await new Promise<void>((resolve, reject) => {
+          image.onload = () => resolve();
+          image.onerror = () =>
+            reject(new Error("Desktop preview decoding failed."));
+          image.src = frame.dataUrl;
+        });
+        if (p.stopped || this.pipelines.get(p.id) !== p) return;
+        if (
+          image.naturalWidth !== frame.width ||
+          image.naturalHeight !== frame.height ||
+          frame.width < 1 ||
+          frame.height < 1 ||
+          !Number.isFinite(frame.capturedAt) ||
+          frame.capturedAt <= 0 ||
+          frame.capturedAt > Date.now() + 1000
+        )
+          throw new Error("Desktop preview metadata is invalid.");
+        const canvas = p.demo!;
+        if (canvas.width !== frame.width || canvas.height !== frame.height) {
+          canvas.width = frame.width;
+          canvas.height = frame.height;
+        }
+        canvas.getContext("2d")!.drawImage(image, 0, 0);
+        p.nativeWidth = frame.nativeWidth;
+        p.nativeHeight = frame.nativeHeight;
+        p.fps = frame.fps;
+        p.previewAt = p.deliveredAt = frame.capturedAt;
+        // Use the owner's decoded-frame time, including transport/decode delay.
+        // Repainting a cached JPEG never gives it a fresh sampling deadline.
+        p.deliveredMonotonic =
+          performance.now() - Math.max(0, Date.now() - frame.capturedAt);
+        p.deliverySequence = frame.sequence;
+        if (p.firstDesktopFrameTimer) clearTimeout(p.firstDesktopFrameTimer);
+        p.firstDesktopFrameReady?.();
+        p.firstDesktopFrameReady = undefined;
+        this.changed();
+      }
+    } catch (error) {
+      this.desktopFailed(p, {
+        sourceId: p.id,
+        captureId: p.captureId!,
+        message:
+          error instanceof Error ? error.message : "Desktop preview failed.",
+      });
+    } finally {
+      p.decoding = false;
+    }
+  }
   private async sample(p: Pipeline) {
     if (p.stopped || p.busy) return;
     const source = this.getSource(p.id);
@@ -288,8 +405,9 @@ export class CaptureManager {
     }
     const input = p.video || p.demo;
     if (!input) return;
-    const width = p.video?.videoWidth || p.demo?.width || 0;
-    const height = p.video?.videoHeight || p.demo?.height || 0;
+    const width = p.nativeWidth || p.video?.videoWidth || p.demo?.width || 0;
+    const height =
+      p.nativeHeight || p.video?.videoHeight || p.demo?.height || 0;
     if (width !== p.width || height !== p.height) {
       p.width = width;
       p.height = height;
@@ -326,6 +444,7 @@ export class CaptureManager {
     )
       return;
     p.sampledSequence = p.deliverySequence;
+    const deliverySequence = p.deliverySequence;
     const capturedAt = p.deliveredAt;
     p.busy = true;
     try {
@@ -349,6 +468,19 @@ export class CaptureManager {
       }
       const motion = p.previous ? changed / luminance.length : 0;
       p.previous = luminance;
+      // Freeze pixels and their reviewed masks before the asynchronous metric
+      // command. A newer camera frame or desktop JPEG may replace the preview
+      // while that command is pending.
+      let canvas: HTMLCanvasElement | undefined;
+      if (Date.now() - p.frameAt >= 2000) {
+        const scale = Math.min(1, 1024 / Math.max(width, height));
+        canvas = document.createElement("canvas");
+        canvas.width = Math.max(1, Math.round(width * scale));
+        canvas.height = Math.max(1, Math.round(height * scale));
+        const c = canvas.getContext("2d")!;
+        c.drawImage(input, 0, 0, canvas.width, canvas.height);
+        paintMasks(c, source.masks, canvas.width, canvas.height);
+      }
       if (source.motionEnabled)
         await this.bridge.invoke({
           type: "source.motion",
@@ -357,14 +489,23 @@ export class CaptureManager {
           capturedAt,
           value: motion,
         });
-      if (p.stopped || Date.now() - p.frameAt < 2000) return;
-      const scale = Math.min(1, 1024 / Math.max(width, height));
-      const canvas = document.createElement("canvas");
-      canvas.width = Math.max(1, Math.round(width * scale));
-      canvas.height = Math.max(1, Math.round(height * scale));
-      const c = canvas.getContext("2d")!;
-      c.drawImage(input, 0, 0, canvas.width, canvas.height);
-      paintMasks(c, source.masks, canvas.width, canvas.height);
+      const authority = this.getSource(p.id);
+      if (
+        !canvas ||
+        p.stopped ||
+        this.pipelines.get(p.id) !== p ||
+        p.deliverySequence !== deliverySequence ||
+        p.deliveredAt !== capturedAt ||
+        (p.nativeWidth || p.video?.videoWidth || p.demo?.width || 0) !==
+          width ||
+        (p.nativeHeight || p.video?.videoHeight || p.demo?.height || 0) !==
+          height ||
+        performance.now() - p.deliveredMonotonic > 5000 ||
+        !authority ||
+        authority.status !== "live" ||
+        authority.revision !== source.revision
+      )
+        return;
       let dataUrl = canvas.toDataURL("image/jpeg", 0.7);
       if (dataUrl.length > 1_398_100)
         dataUrl = canvas.toDataURL("image/jpeg", 0.4);

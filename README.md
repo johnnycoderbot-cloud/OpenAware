@@ -2,30 +2,30 @@
 
 An open-source AI companion for live desktop and camera awareness, designed to work with LM Studio and Bionic.
 
-**Project status: v0.2 developer prototype.** The Electron application implements live source previews, local AI workflows, and background monitoring with tray controls. The dashboard now follows the original concept's top navigation, large selected desktop view, camera strip, and a right column for the assistant, action controls, and activity. The original plan remains the release roadmap; hardware, real models, and native input effects still need their documented acceptance evidence. See [prototype status](docs/prototype.md) for the implementation boundary and measured checks.
+**Project status: v0.2.1 developer prototype.** The Electron application implements live source previews, local AI workflows, and background monitoring with tray controls. Version 0.2.1 fixes desktop permission handling with isolated source workers and adds a recognizable blue OpenAware tray/app icon; it retains the v0.2 dashboard layout. The original plan remains the release roadmap; personal monitor capture, real cameras/models, and native input effects still need their documented acceptance evidence. See [prototype status](docs/prototype.md) for the implementation boundary and measured checks.
 
 OpenAware is intended to let you watch selected monitors, virtual-camera sources, and real cameras together; ask an AI about what is visible; receive alerts; and authorize specific actions on your actual computer. Trading is one workspace, alongside camera monitoring and everyday desktop assistance.
 
-![OpenAware v0.2 desktop prototype with synthetic source previews](assets/prototype-desktop-multisource.png)
+![OpenAware v0.2.1 desktop prototype with synthetic source previews](assets/prototype-desktop-multisource.png)
 
-*Actual v0.2 Electron interface with synthetic demo/camera previews. This illustrates the populated layout; it does not show real camera capture or model output. A fresh launch has no selected feeds. The original [AI-generated interface concept](assets/app-concept.png) remains a planning illustration.*
+_Actual v0.2.1 Electron interface with synthetic demo/camera previews. This illustrates the populated layout; it does not show real camera capture or model output. A fresh launch has no selected feeds. The original [AI-generated interface concept](assets/app-concept.png) remains a planning illustration._
 
 ## Read the plan
 
 Start with [PLAN.md](PLAN.md). The core documents are:
 
-| Document | What it answers |
-| --- | --- |
-| [Product specification](docs/product-spec.md) | User goals, features, release scope, permissions, and acceptance criteria |
-| [UX specification](docs/ux-spec.md) | Onboarding, live feeds, model selection, chat, alerts, and action flows |
-| [Architecture](docs/architecture.md) | Processes, adapters, scheduling, storage, and failure handling |
-| [Contracts](docs/contracts.md) | Source/frame/event/model/action data and control surfaces |
-| [Integration evidence](docs/integrations.md) | What vendors document versus what a prototype must verify |
-| [Security and privacy](docs/security-privacy.md) | Feed boundaries, prompt injection, secrets, retention, and stop behavior |
-| [Roadmap](docs/roadmap.md) | Sequenced implementation slices and release gates |
-| [Testing and release](docs/testing-release.md) | Automated fixtures, Windows hardware tests, packaging, and release evidence |
-| [Decision register](docs/decisions.md) | Proposed choices, unresolved questions, and decision owners |
-| [Background mode](docs/background-mode.md) | Configure a session, hide the dashboard, and use Show, Stop, or Quit |
+| Document                                         | What it answers                                                             |
+| ------------------------------------------------ | --------------------------------------------------------------------------- |
+| [Product specification](docs/product-spec.md)    | User goals, features, release scope, permissions, and acceptance criteria   |
+| [UX specification](docs/ux-spec.md)              | Onboarding, live feeds, model selection, chat, alerts, and action flows     |
+| [Architecture](docs/architecture.md)             | Processes, adapters, scheduling, storage, and failure handling              |
+| [Contracts](docs/contracts.md)                   | Source/frame/event/model/action data and control surfaces                   |
+| [Integration evidence](docs/integrations.md)     | What vendors document versus what a prototype must verify                   |
+| [Security and privacy](docs/security-privacy.md) | Feed boundaries, prompt injection, secrets, retention, and stop behavior    |
+| [Roadmap](docs/roadmap.md)                       | Sequenced implementation slices and release gates                           |
+| [Testing and release](docs/testing-release.md)   | Automated fixtures, Windows hardware tests, packaging, and release evidence |
+| [Decision register](docs/decisions.md)           | Proposed choices, unresolved questions, and decision owners                 |
+| [Background mode](docs/background-mode.md)       | Configure a session, hide the dashboard, and use Show, Stop, or Quit        |
 
 ## Intended design
 
@@ -43,7 +43,7 @@ flowchart LR
   A[User-approved action] --> C[Separate computer-action broker]
 ```
 
-The preview is continuous video. AI analysis samples eligible frames at a rate the selected model can sustain. Source identity, observation age, and degraded states must remain visible. No every-frame detection or trading-profit guarantee is part of the design.
+The live preview updates continuously; desktop workers deliver bounded JPEG frames at up to 15 fps, while camera previews use video. AI analysis samples eligible frames at a rate the selected model can sustain. Source identity, observation age, and degraded states must remain visible. No every-frame detection or trading-profit guarantee is part of the design.
 
 ## LM Studio and Bionic
 
@@ -53,7 +53,7 @@ The prototype also implements a local Ollama adapter. OpenRouter, OpenAI, and NV
 
 ## Windows prototype
 
-Download the [v0.2.0 Windows x64 installer](https://github.com/johnnycoderbot-cloud/OpenAware/releases/download/v0.2.0/OpenAware.Setup.0.2.0.exe). The [developer prerelease](https://github.com/johnnycoderbot-cloud/OpenAware/releases/tag/v0.2.0) includes its SHA-256 checksum. Distribution is unsigned; packaged workflow checks and their limits are recorded in the [v0.2 implementation ledger](.omx/logs/implementation-v0.2.md). The installer itself has not been exercised. No model is bundled, and real cameras, monitor capture, native input effects, and Bionic compatibility still need live acceptance tests.
+Download the [v0.2.1 Windows x64 installer](https://github.com/johnnycoderbot-cloud/OpenAware/releases/download/v0.2.1/OpenAware.Setup.0.2.1.exe). The [developer prerelease](https://github.com/johnnycoderbot-cloud/OpenAware/releases/tag/v0.2.1) includes its SHA-256 checksum. Distribution is unsigned; packaged workflow checks and their limits are recorded in the [v0.2.1 implementation ledger](.omx/logs/implementation-v0.2.1.md). The installer itself has not been exercised. No model is bundled; real cameras/models, personal monitor and mixed-DPI capture, native input effects, and Bionic compatibility still need live acceptance tests.
 
 ## Run from source
 
@@ -64,7 +64,9 @@ npm ci
 npm start
 ```
 
-No source starts automatically. Add a synthetic demo, select a camera/OBS device, or choose a monitor/window. Connect a running local LM Studio or Ollama server in Connections, select an image-capable model, and run the visible synthetic vision probe before starting the Observer. Live preview remains independent of model speed.
+No source starts automatically. For live screens, click **Add source**, select **Monitor**, choose the screen, add it, then click **Connect** on its source tile. Repeat for your second monitor; use the focused-desktop selector to switch the large preview. Choose **Window** instead to capture one application, or select a camera/OBS device for a camera feed. **Demo** shows generated content and does not capture your screen.
+
+Live preview needs no AI model and does not require **Start watching**. For AI monitoring, connect a running local LM Studio or Ollama server in Connections, select an image-capable model, and run the visible synthetic vision probe before clicking **Start watching**. Preview remains independent of model speed.
 
 Observer and Operator are two cooperating roles using the explicitly selected local model. Observer describes the selected sources; Operator proposes click, typing, and keypress steps for a selected monitor. Executing a proposal uses a native review for each step, fresh target checks, and a separate Windows input worker. Stop all cancels remaining work; Ctrl+Shift+F12 is the emergency shortcut when registration succeeds. Computer effects already sent cannot be undone by Stop.
 

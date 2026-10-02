@@ -36,7 +36,8 @@ import {
   inspectWindowsTarget,
 } from "../../../packages/actions/src/windows";
 import { ServiceClient } from "./service-client";
-import { DisplayCaptureGrant } from "./capture-grant";
+import { DesktopCaptureBroker } from "./desktop-capture";
+import { createTrayIcon } from "./tray-icon";
 import { DesktopBackgroundController, launchModeFromArgs } from "./background";
 
 const rendererPath = join(__dirname, "renderer", "index.html");
@@ -53,8 +54,11 @@ let tray: Tray | undefined;
 let trayMenuMode: boolean | undefined;
 let trayTooltip = "";
 let state = initialSnapshot();
-const captureGrant = new DisplayCaptureGrant(!testMode);
 const selectedDevices = new Set<string>();
+const desktopConnections = new Map<
+  string,
+  { captureId: string; deviceId?: string }
+>();
 const listedDesktopDevices = new Map<
   string,
   { kind: "monitor" | "window"; expiresAt: number }
@@ -71,10 +75,6 @@ function trustedUrl(url: string): boolean {
   } catch {
     return false;
   }
-}
-function frameKey(): string {
-  const frame = window?.webContents.mainFrame;
-  return frame ? `${frame.processId}:${frame.routingId}` : "";
 }
 function assertSender(event: IpcMainInvokeEvent): void {
   if (
@@ -94,7 +94,8 @@ function broadcast(next: Snapshot): void {
 }
 const service = new ServiceClient(broadcast, (message) => {
   broker.revoke();
-  captureGrant.revoke();
+  desktopConnections.clear();
+  desktopCapture.stopAll();
   selectedDevices.clear();
   listedDesktopDevices.clear();
   captureGeneration += 1;
@@ -114,6 +115,51 @@ const service = new ServiceClient(broadcast, (message) => {
     window.webContents.send("openaware:stop");
   desktop.serviceFailed();
 });
+const desktopCapture = new DesktopCaptureBroker({
+  enabled: !testMode,
+  onFrame: (packet) => {
+    const connection = desktopConnections.get(packet.sourceId);
+    if (
+      connection?.captureId !== packet.captureId ||
+      connection.deviceId !== packet.deviceId
+    )
+      return;
+    selectedDevices.add(packet.deviceId);
+    if (window && !window.isDestroyed())
+      window.webContents.send("openaware:desktop-frame", packet);
+  },
+  onError: (sourceId, message, captureId) => {
+    if (desktopConnections.get(sourceId)?.captureId !== captureId) return;
+    stopDesktopConnection(sourceId, captureId);
+    broker.revoke();
+    if (window && !window.isDestroyed())
+      window.webContents.send("openaware:desktop-error", {
+        sourceId,
+        message,
+        captureId,
+      });
+    void service
+      .request({
+        type: "source.update",
+        sourceId,
+        patch: { status: "unavailable", error: message },
+      })
+      .catch(() => {});
+  },
+});
+function stopDesktopConnection(sourceId: string, captureId?: string): void {
+  const connection = desktopConnections.get(sourceId);
+  if (captureId && connection?.captureId !== captureId) return;
+  desktopConnections.delete(sourceId);
+  desktopCapture.stop(sourceId, captureId);
+  if (
+    connection?.deviceId &&
+    ![...desktopConnections.values()].some(
+      (item) => item.deviceId === connection.deviceId,
+    )
+  )
+    selectedDevices.delete(connection.deviceId);
+}
 const desktop = new DesktopBackgroundController(
   {
     showWindow: () => {
@@ -151,7 +197,7 @@ function updateTray(): void {
   if (!tray || tray.isDestroyed()) return;
   const current = desktop.snapshot();
   const active = state.sources.some((source) => source.status === "live");
-  const tooltip = `OpenAware — ${active ? "capture active" : state.session === "stopped" ? "stopped" : "idle"} — Ctrl+Shift+F12 stops all`;
+  const tooltip = `OpenAware — ${active ? "capture active" : state.session === "stopped" ? "stopped" : "idle"}. Double-click to open. Right-click for controls. Ctrl+Shift+F12 stops all.`;
   if (tooltip !== trayTooltip) {
     tray.setToolTip(tooltip);
     trayTooltip = tooltip;
@@ -177,7 +223,8 @@ function updateTray(): void {
 }
 function stopImmediately(): void {
   broker.revoke();
-  captureGrant.revoke();
+  desktopConnections.clear();
+  desktopCapture.stopAll();
   selectedDevices.clear();
   listedDesktopDevices.clear();
   captureGeneration += 1;
@@ -407,6 +454,13 @@ function registerIpc(): void {
         throw new Error("Grant desktop capture before starting this source");
     }
     if (
+      command.type === "source.remove" ||
+      (command.type === "source.update" &&
+        command.patch.status &&
+        command.patch.status !== "live")
+    )
+      stopDesktopConnection(command.sourceId);
+    if (
       [
         "source.remove",
         "source.update",
@@ -443,24 +497,77 @@ function registerIpc(): void {
       displayId: choice.display_id,
     })) as CaptureChoice[];
   });
-  ipcMain.handle("openaware:select-desktop", async (event, id: unknown) => {
+  ipcMain.handle("openaware:select-desktop", (event) => {
     assertSender(event);
-    if (typeof id !== "string" || id.length > 512)
-      throw new Error("Invalid desktop source");
-    if (testMode) throw new Error("Desktop capture is disabled in test mode");
-    const generation = captureGeneration;
-    const choices = await desktopCapturer.getSources({
-      types: ["screen", "window"],
-      thumbnailSize: { width: 0, height: 0 },
-      fetchWindowIcons: false,
-    });
-    if (
-      generation !== captureGeneration ||
-      !choices.some((choice) => choice.id === id)
-    )
-      throw new Error("Desktop source selection expired");
-    captureGrant.select(id, frameKey());
+    throw new Error(
+      "Direct dashboard desktop capture is disabled. Connect the selected source instead.",
+    );
   });
+  ipcMain.handle(
+    "openaware:start-desktop-capture",
+    async (event, sourceId: unknown, captureId: unknown) => {
+      assertSender(event);
+      if (
+        typeof sourceId !== "string" ||
+        !/^[0-9a-f-]{36}$/i.test(sourceId) ||
+        typeof captureId !== "string" ||
+        !/^[0-9a-f-]{36}$/i.test(captureId)
+      )
+        throw new Error("Invalid desktop capture connection");
+      if (testMode) throw new Error("Desktop capture is disabled in test mode");
+      // Install ownership before any await, so Stop/replacement also cancels a
+      // start still waiting for authoritative state. The token is not authority;
+      // main derives the native target exclusively from the registered source.
+      stopDesktopConnection(sourceId);
+      const connection = {
+        captureId,
+        deviceId: undefined as string | undefined,
+      };
+      desktopConnections.set(sourceId, connection);
+      broker.revoke();
+      try {
+        const authoritative = await service.request<Snapshot>({
+          type: "state.get",
+        });
+        if (desktopConnections.get(sourceId) !== connection)
+          throw new Error("Desktop capture connection was stopped.");
+        const source = authoritative.sources.find(
+          (item) => item.id === sourceId,
+        );
+        if (
+          !source ||
+          (source.kind !== "monitor" && source.kind !== "window") ||
+          !source.deviceId.startsWith(
+            source.kind === "monitor" ? "screen:" : "window:",
+          )
+        )
+          throw new Error("Choose a registered desktop source first");
+        connection.deviceId = source.deviceId;
+        await desktopCapture.start(sourceId, source.deviceId, captureId);
+        if (desktopConnections.get(sourceId) !== connection)
+          throw new Error("Desktop capture connection was stopped.");
+      } catch (error) {
+        if (desktopConnections.get(sourceId) === connection)
+          stopDesktopConnection(sourceId, captureId);
+        throw error;
+      }
+    },
+  );
+  ipcMain.handle(
+    "openaware:stop-desktop-capture",
+    (event, sourceId: unknown, captureId: unknown) => {
+      assertSender(event);
+      if (
+        typeof sourceId !== "string" ||
+        !/^[0-9a-f-]{36}$/i.test(sourceId) ||
+        typeof captureId !== "string" ||
+        !/^[0-9a-f-]{36}$/i.test(captureId)
+      )
+        throw new Error("Invalid desktop capture connection");
+      stopDesktopConnection(sourceId, captureId);
+      broker.revoke();
+    },
+  );
   ipcMain.handle("openaware:execute-plan", async (event, planId: unknown) => {
     assertSender(event);
     if (typeof planId !== "string" || !/^[0-9a-f-]{36}$/i.test(planId))
@@ -497,32 +604,12 @@ function registerIpc(): void {
 
 function configurePermissions(): void {
   const current = session.defaultSession;
-  // Camera checks proceed to their explicit dialog. Display checks need an exact one-shot lease.
-  // Both callback orders are supported; the selector itself always consumes only one lease.
-  // https://www.electronjs.org/docs/latest/api/session#sessetpermissioncheckhandlerhandler
-  current.setPermissionCheckHandler(
-    (contents, permission, _origin, details) => {
-      const trusted =
-        contents === window?.webContents &&
-        details.isMainFrame &&
-        trustedUrl(details.requestingUrl ?? contents?.mainFrame.url ?? "");
-      return (
-        !!trusted &&
-        permission === "display-capture" &&
-        captureGrant.check(frameKey())
-      );
-    },
-  );
+  // This dashboard never owns desktop media. Its explicit camera-video request
+  // still proceeds to the native permission dialog. Desktop capture belongs to
+  // fixed disposable documents in separate sessions, not this shared UI frame.
+  current.setPermissionCheckHandler(() => false);
   current.setPermissionRequestHandler(
     (contents, permission, callback, details) => {
-      if (permission === "display-capture") {
-        const trusted =
-          contents === window?.webContents &&
-          details.isMainFrame &&
-          trustedUrl(details.requestingUrl);
-        callback(!!trusted && captureGrant.request(frameKey()));
-        return;
-      }
       const permitted =
         !testMode &&
         contents === window?.webContents &&
@@ -560,55 +647,9 @@ function configurePermissions(): void {
         .finally(() => cameraDialogs.delete(controller));
     },
   );
-  current.setDisplayMediaRequestHandler(
-    (request, callback) => {
-      const generation = captureGeneration;
-      if (
-        testMode ||
-        !request.frame ||
-        request.frame !== window?.webContents.mainFrame ||
-        !trustedUrl(request.frame.url) ||
-        !request.videoRequested ||
-        request.audioRequested
-      ) {
-        callback({});
-        return;
-      }
-      const selection = captureGrant.begin(frameKey());
-      if (!selection) {
-        callback({});
-        return;
-      }
-      void desktopCapturer
-        .getSources({
-          types: ["screen", "window"],
-          thumbnailSize: { width: 0, height: 0 },
-          fetchWindowIcons: false,
-        })
-        .then((choices) => {
-          const choice = choices.find((item) => item.id === selection.id);
-          if (
-            !choice ||
-            generation !== captureGeneration ||
-            !request.frame ||
-            request.frame !== window?.webContents.mainFrame ||
-            !trustedUrl(request.frame.url) ||
-            !captureGrant.complete(selection, true)
-          ) {
-            captureGrant.complete(selection, false);
-            callback({});
-            return;
-          }
-          selectedDevices.add(choice.id);
-          callback({ video: choice });
-        })
-        .catch(() => {
-          captureGrant.complete(selection, false);
-          callback({});
-        });
-    },
-    { useSystemPicker: false },
-  );
+  current.setDisplayMediaRequestHandler((_request, callback) => callback({}), {
+    useSystemPicker: false,
+  });
   current.webRequest.onBeforeRequest((details, callback) => {
     const url = details.url;
     // UI has no network role; provider requests live in the isolated service process.
@@ -710,25 +751,9 @@ app
         },
       ]),
     );
-    const icon = nativeImage.createFromBuffer(
-      Buffer.from(
-        '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><rect width="32" height="32" rx="8" fill="#18242f"/><circle cx="16" cy="16" r="8" fill="#7edabf"/><circle cx="16" cy="16" r="3" fill="#18242f"/></svg>',
-      ),
-    );
-    // Electron may not decode SVG on every platform; a bitmap fallback keeps the tray real.
-    const trayIcon = icon.isEmpty()
-      ? nativeImage.createFromBitmap(
-          Buffer.from(
-            Array(16 * 16)
-              .fill([126, 218, 191, 255])
-              .flat(),
-          ),
-          { width: 16, height: 16 },
-        )
-      : icon;
     if (!testMode) {
       try {
-        tray = new Tray(trayIcon);
+        tray = new Tray(createTrayIcon(nativeImage));
         tray.on("double-click", () => desktop.show());
         desktop.setTrayAvailable(true);
       } catch {
@@ -765,6 +790,8 @@ app
     app.quit();
   });
 app.on("before-quit", () => {
+  desktopCapture.close();
+  desktopConnections.clear();
   desktop.beginQuit();
 });
 app.on("window-all-closed", () => app.quit());

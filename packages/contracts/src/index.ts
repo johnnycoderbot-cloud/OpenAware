@@ -252,11 +252,33 @@ export interface DesktopState {
   trayAvailable: boolean;
   launchMode: "window" | "background";
 }
+export interface DesktopCaptureFrame {
+  sourceId: string;
+  captureId: string;
+  deviceId: string;
+  dataUrl: string;
+  width: number;
+  height: number;
+  nativeWidth: number;
+  nativeHeight: number;
+  capturedAt: number;
+  sequence: number;
+  fps?: number;
+}
+export interface DesktopCaptureError {
+  sourceId: string;
+  captureId: string;
+  message: string;
+}
 export interface OpenAwareBridge {
   invoke<T = Snapshot>(command: Command): Promise<T>;
   onState(callback: (state: Snapshot) => void): () => void;
   listDesktopSources(): Promise<CaptureChoice[]>;
   selectDesktopSource(id: string): Promise<void>;
+  startDesktopCapture(sourceId: string, captureId: string): Promise<void>;
+  stopDesktopCapture(sourceId: string, captureId: string): Promise<void>;
+  onDesktopFrame(callback: (frame: DesktopCaptureFrame) => void): () => void;
+  onDesktopError(callback: (error: DesktopCaptureError) => void): () => void;
   executePlan(planId: string): Promise<ActionResult[]>;
   stopAll(): Promise<void>;
   getDesktopState(): Promise<DesktopState>;
@@ -265,7 +287,7 @@ export interface OpenAwareBridge {
   quit(): Promise<void>;
 }
 export const initialSnapshot = (): Snapshot => ({
-  version: "0.2.0",
+  version: "0.2.1",
   session: "idle",
   epoch: 1,
   sources: [],

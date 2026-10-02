@@ -7,6 +7,7 @@ export default defineConfig({
     "background.spec.ts",
     "tray.spec.ts",
     "visual.spec.ts",
+    "native-capture.spec.ts",
   ],
   workers: 1,
   timeout: 45_000,

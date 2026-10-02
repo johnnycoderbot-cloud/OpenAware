@@ -5,6 +5,8 @@ import { CaptureManager } from "../apps/desktop/renderer/capture";
 import {
   initialSnapshot,
   type Command,
+  type DesktopCaptureError,
+  type DesktopCaptureFrame,
   type OpenAwareBridge,
   type Source,
 } from "../packages/contracts/src/index";
@@ -36,7 +38,11 @@ function media() {
 }
 
 /** Minimal browser stand-ins. These tests verify lifecycle and command routing, not camera hardware or JPEG encoding. */
-function browser(t: TestContext, getUserMedia: () => Promise<MediaStream>) {
+function browser(
+  t: TestContext,
+  getUserMedia: () => Promise<MediaStream>,
+  manualImages = false,
+) {
   let luminance = 0;
   const videos: Array<{ callbacks: Map<number, () => void> }> = [];
   function deliver() {
@@ -55,6 +61,24 @@ function browser(t: TestContext, getUserMedia: () => Promise<MediaStream>) {
     globalThis,
     "navigator",
   );
+  const originalImage = Object.getOwnPropertyDescriptor(globalThis, "Image");
+  const images: Array<{
+    naturalWidth: number;
+    naturalHeight: number;
+    onload?: () => void;
+  }> = [];
+  class PreviewImage {
+    naturalWidth = 1280;
+    naturalHeight = 720;
+    onload?: () => void;
+    onerror?: () => void;
+    constructor() {
+      images.push(this);
+    }
+    set src(value: string) {
+      if (value && !manualImages) queueMicrotask(() => this.onload?.());
+    }
+  }
   const document = {
     createElement(tag: string) {
       if (tag === "video") {
@@ -120,6 +144,10 @@ function browser(t: TestContext, getUserMedia: () => Promise<MediaStream>) {
     configurable: true,
     value: { mediaDevices: { getUserMedia } },
   });
+  Object.defineProperty(globalThis, "Image", {
+    configurable: true,
+    value: PreviewImage,
+  });
   t.after(() => {
     if (originalDocument)
       Object.defineProperty(globalThis, "document", originalDocument);
@@ -127,12 +155,23 @@ function browser(t: TestContext, getUserMedia: () => Promise<MediaStream>) {
     if (originalNavigator)
       Object.defineProperty(globalThis, "navigator", originalNavigator);
     else Reflect.deleteProperty(globalThis, "navigator");
+    if (originalImage)
+      Object.defineProperty(globalThis, "Image", originalImage);
+    else Reflect.deleteProperty(globalThis, "Image");
   });
   return {
     setLuminance: (value: number) => {
       luminance = value;
     },
     deliver,
+    images,
+    decodeImage(index: number, width = 1280, height = 720) {
+      const image = images[index];
+      if (!image) throw new Error("No desktop image is waiting to decode");
+      image.naturalWidth = width;
+      image.naturalHeight = height;
+      image.onload?.();
+    },
   };
 }
 
@@ -151,12 +190,12 @@ async function eventually(condition: () => boolean) {
   });
 }
 
-function harness(motionEnabled = false) {
+function harness(motionEnabled = false, kind: Source["kind"] = "camera") {
   const state = initialSnapshot();
   const source: Source = {
     id: randomUUID(),
     name: "Selected camera fixture",
-    kind: "camera",
+    kind,
     deviceId: "explicit-camera-id",
     revision: 1,
     status: "stopped",
@@ -166,6 +205,29 @@ function harness(motionEnabled = false) {
   };
   state.sources = [source];
   const commands: Command[] = [];
+  let desktopFrame: (frame: DesktopCaptureFrame) => void = () => {};
+  let desktopError: (error: DesktopCaptureError) => void = () => {};
+  const starts: Array<{ sourceId: string; captureId: string }> = [];
+  const stops: Array<{ sourceId: string; captureId: string }> = [];
+  const emitFrame = (
+    captureId: string,
+    patch: Partial<DesktopCaptureFrame> = {},
+  ) => {
+    desktopFrame({
+      sourceId: source.id,
+      deviceId: source.deviceId,
+      captureId,
+      dataUrl: "data:image/jpeg;base64,/9j/2Q==",
+      width: 1280,
+      height: 720,
+      nativeWidth: 3840,
+      nativeHeight: 2160,
+      capturedAt: Date.now(),
+      sequence: 1,
+      fps: 15,
+      ...patch,
+    });
+  };
   const bridge: OpenAwareBridge = {
     async invoke<T>(command: Command): Promise<T> {
       commands.push(command);
@@ -180,6 +242,25 @@ function harness(motionEnabled = false) {
     onState: () => () => {},
     listDesktopSources: async () => [],
     selectDesktopSource: async () => {},
+    startDesktopCapture: async (sourceId, captureId) => {
+      starts.push({ sourceId, captureId });
+      emitFrame(captureId);
+    },
+    stopDesktopCapture: async (sourceId, captureId) => {
+      stops.push({ sourceId, captureId });
+    },
+    onDesktopFrame: (callback) => {
+      desktopFrame = callback;
+      return () => {
+        desktopFrame = () => {};
+      };
+    },
+    onDesktopError: (callback) => {
+      desktopError = callback;
+      return () => {
+        desktopError = () => {};
+      };
+    },
     executePlan: async () => [],
     stopAll: async () => {},
     getDesktopState: async () => ({
@@ -205,7 +286,17 @@ function harness(motionEnabled = false) {
       throw new Error(message);
     },
   );
-  return { state, source, commands, manager };
+  return {
+    state,
+    source,
+    commands,
+    manager,
+    bridge,
+    starts,
+    stops,
+    emitFrame,
+    emitError: (error: DesktopCaptureError) => desktopError(error),
+  };
 }
 
 test("a late rejected camera permission request cannot tear down its replacement after Stop and reconnect", async (t) => {
@@ -356,4 +447,262 @@ test("sampling a stalled video does not refresh evidence or repeat motion until 
   assert.equal(frames[1].frame.capturedAt, newDeliveryAt);
   assert.equal(metrics[1].capturedAt, newDeliveryAt);
   assert.equal(metrics[1].value, 1);
+});
+
+test("isolated desktop previews preserve native geometry and the original decoded frame time", async (t) => {
+  browser(t, async () => {
+    throw new Error("Desktop previews must not request dashboard camera media");
+  });
+  const h = harness(true, "monitor");
+  t.after(() => h.manager.dispose());
+  const capturedAt = Date.now() - 250;
+  h.bridge.startDesktopCapture = async (sourceId, captureId) => {
+    h.starts.push({ sourceId, captureId });
+    h.emitFrame(captureId, { capturedAt });
+  };
+  await h.manager.start(h.source);
+  const info = h.manager.info(h.source.id)!;
+  assert.equal(info.stream, undefined);
+  assert.equal(info.canvas?.width, 1280);
+  assert.equal(info.canvas?.height, 720);
+  assert.equal(info.previewAt, capturedAt);
+  assert.equal(h.state.sources[0].width, 3840);
+  assert.equal(h.state.sources[0].height, 2160);
+  assert.equal(h.state.sources[0].fps, 15);
+  const frame = h.commands.find((command) => command.type === "source.frame")!;
+  assert.equal(frame.frame.capturedAt, capturedAt);
+  assert.equal(frame.frame.width, 1024);
+  assert.equal(frame.frame.height, 576);
+  assert.equal(
+    h.commands.find((command) => command.type === "source.motion")!.capturedAt,
+    capturedAt,
+  );
+
+  // Neither duplicate packets nor sampling timers renew this image's evidence.
+  h.emitFrame(h.starts[0].captureId, { capturedAt: Date.now(), sequence: 1 });
+  await new Promise((resolve) => setTimeout(resolve, 2250));
+  assert.equal(h.manager.info(h.source.id)!.previewAt, capturedAt);
+  assert.equal(
+    h.commands.filter((command) => command.type === "source.frame").length,
+    1,
+  );
+  assert.equal(
+    h.commands.filter((command) => command.type === "source.motion").length,
+    1,
+  );
+  const staleAt = Date.now() - 6000;
+  h.emitFrame(h.starts[0].captureId, { capturedAt: staleAt, sequence: 2 });
+  await eventually(() => h.manager.info(h.source.id)!.previewAt === staleAt);
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  assert.equal(
+    h.commands.filter((command) => command.type === "source.frame").length,
+    1,
+    "old transported pixels remain too old to submit as evidence",
+  );
+  assert.equal(
+    h.commands.filter((command) => command.type === "source.motion").length,
+    1,
+  );
+});
+
+test("Stop and reconnect isolate delayed desktop start, decode, packets, and errors with a capture token", async (t) => {
+  const scene = browser(
+    t,
+    async () => {
+      throw new Error("Unexpected camera request");
+    },
+    true,
+  );
+  const h = harness(false, "window");
+  t.after(() => h.manager.dispose());
+  const oldAcquisition = deferred<void>();
+  h.bridge.startDesktopCapture = async (sourceId, captureId) => {
+    h.starts.push({ sourceId, captureId });
+    h.emitFrame(captureId);
+    if (h.starts.length === 1) await oldAcquisition.promise;
+  };
+  const oldStart = h.manager.start(h.source).catch(() => {});
+  const oldToken = h.starts[0].captureId;
+  assert.equal(scene.images.length, 1);
+  h.manager.stop(h.source.id);
+  const replacementStart = h.manager.start(h.source);
+  const replacementToken = h.starts[1].captureId;
+  assert.notEqual(replacementToken, oldToken);
+  assert.deepEqual(h.stops, [{ sourceId: h.source.id, captureId: oldToken }]);
+  scene.decodeImage(1);
+  await replacementStart;
+  const replacementCanvas = h.manager.info(h.source.id)!.canvas;
+  const replacementAt = h.manager.info(h.source.id)!.previewAt;
+  scene.decodeImage(0);
+  oldAcquisition.reject(new Error("Old native acquisition rejected late"));
+  await oldStart;
+  h.emitFrame(oldToken, { sequence: 99, capturedAt: Date.now() });
+  h.emitError({
+    sourceId: h.source.id,
+    captureId: oldToken,
+    message: "Old capture ended",
+  });
+  await Promise.resolve();
+  assert.equal(
+    scene.images.length,
+    2,
+    "old packets are discarded before decoding",
+  );
+  assert.equal(h.manager.info(h.source.id)!.canvas, replacementCanvas);
+  assert.equal(h.manager.info(h.source.id)!.previewAt, replacementAt);
+  assert.equal(h.state.sources[0].status, "live");
+  assert.equal(
+    h.commands.some(
+      (command) =>
+        command.type === "source.update" &&
+        command.patch.status === "unavailable",
+    ),
+    false,
+  );
+  h.manager.stopAll();
+  assert.deepEqual(h.stops[1], {
+    sourceId: h.source.id,
+    captureId: replacementToken,
+  });
+});
+
+test("desktop decode queues retain only the newest packet and dimension changes require mask review", async (t) => {
+  const scene = browser(
+    t,
+    async () => {
+      throw new Error("Unexpected camera request");
+    },
+    true,
+  );
+  const h = harness(true, "monitor");
+  h.source.masks = [{ x: 0.1, y: 0.1, width: 0.2, height: 0.2 }];
+  t.after(() => h.manager.dispose());
+  const start = h.manager.start(h.source);
+  const captureId = h.starts[0].captureId;
+  scene.decodeImage(0);
+  await start;
+  const secondAt = Date.now();
+  h.emitFrame(captureId, { sequence: 2, capturedAt: secondAt });
+  h.emitFrame(captureId, { sequence: 3, capturedAt: secondAt + 1 });
+  h.emitFrame(captureId, {
+    sequence: 4,
+    capturedAt: secondAt + 2,
+    nativeWidth: 2560,
+    nativeHeight: 1440,
+  });
+  assert.equal(
+    scene.images.length,
+    2,
+    "only one JPEG decodes while newer packets replace one pending slot",
+  );
+  scene.decodeImage(1);
+  await eventually(() => scene.images.length === 3);
+  scene.decodeImage(2);
+  await eventually(() => h.state.sources[0].width === 2560);
+  assert.equal(h.manager.info(h.source.id)!.previewAt, secondAt + 2);
+  assert.equal(h.manager.info(h.source.id)!.blocked, true);
+  assert.equal(h.state.sources[0].analysisEnabled, false);
+  assert.equal(h.state.sources[0].motionEnabled, false);
+  assert.equal(
+    scene.images.length,
+    3,
+    "the intermediate pending packet was never decoded",
+  );
+  h.manager.reviewMasks(h.source.id);
+  assert.equal(h.manager.info(h.source.id)!.blocked, false);
+});
+
+test("a desktop dimension change while motion submission is pending cannot send new pixels with old mask authority", async (t) => {
+  browser(t, async () => {
+    throw new Error("Unexpected camera request");
+  });
+  const h = harness(true, "monitor");
+  t.after(() => h.manager.dispose());
+  h.source.width = 3840;
+  h.source.height = 2160;
+  h.source.masks = [{ x: 0.1, y: 0.1, width: 0.2, height: 0.2 }];
+  const pendingMotion = deferred<void>();
+  const invoke = h.bridge.invoke;
+  h.bridge.invoke = async <T>(command: Command): Promise<T> => {
+    const result = await invoke<T>(command);
+    if (command.type === "source.motion") await pendingMotion.promise;
+    return result;
+  };
+  const start = h.manager.start(h.source);
+  await eventually(() =>
+    h.commands.some((command) => command.type === "source.motion"),
+  );
+  const captureId = h.starts[0].captureId;
+  const changedAt = Date.now();
+  h.emitFrame(captureId, {
+    sequence: 2,
+    capturedAt: changedAt,
+    nativeWidth: 2560,
+    nativeHeight: 1440,
+  });
+  await eventually(() => h.manager.info(h.source.id)!.previewAt === changedAt);
+  pendingMotion.resolve();
+  await start;
+  assert.equal(
+    h.commands.filter((command) => command.type === "source.frame").length,
+    0,
+    "the in-flight frame must be discarded before JPEG submission",
+  );
+  await eventually(() => h.manager.info(h.source.id)!.blocked);
+  assert.equal(h.state.sources[0].width, 2560);
+  assert.equal(h.state.sources[0].analysisEnabled, false);
+  assert.equal(h.state.sources[0].motionEnabled, false);
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  assert.equal(
+    h.commands.filter((command) => command.type === "source.frame").length,
+    0,
+    "changed geometry remains blocked until masks are reviewed",
+  );
+  h.manager.reviewMasks(h.source.id);
+  const reviewedAt = Date.now();
+  h.emitFrame(captureId, {
+    sequence: 3,
+    capturedAt: reviewedAt,
+    nativeWidth: 2560,
+    nativeHeight: 1440,
+  });
+  await eventually(() =>
+    h.commands.some((command) => command.type === "source.frame"),
+  );
+  const frame = h.commands.find((command) => command.type === "source.frame")!;
+  assert.equal(frame.frame.capturedAt, reviewedAt);
+  assert.equal(frame.frame.sourceRevision, h.state.sources[0].revision);
+});
+
+test("a camera delivery while motion submission is pending cannot be assigned the previous frame timestamp", async (t) => {
+  const current = media();
+  const scene = browser(t, async () => current.stream);
+  const h = harness(true);
+  t.after(() => h.manager.dispose());
+  const pendingMotion = deferred<void>();
+  const invoke = h.bridge.invoke;
+  h.bridge.invoke = async <T>(command: Command): Promise<T> => {
+    const result = await invoke<T>(command);
+    if (command.type === "source.motion") await pendingMotion.promise;
+    return result;
+  };
+  const start = h.manager.start(h.source);
+  await eventually(() =>
+    h.commands.some((command) => command.type === "source.motion"),
+  );
+  scene.setLuminance(255);
+  scene.deliver();
+  const latestAt = h.manager.info(h.source.id)!.previewAt;
+  pendingMotion.resolve();
+  await start;
+  assert.equal(
+    h.commands.filter((command) => command.type === "source.frame").length,
+    0,
+    "new camera pixels cannot complete the old frame submission",
+  );
+  await eventually(() =>
+    h.commands.some((command) => command.type === "source.frame"),
+  );
+  const frame = h.commands.find((command) => command.type === "source.frame")!;
+  assert.equal(frame.frame.capturedAt, latestAt);
 });

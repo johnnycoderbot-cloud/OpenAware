@@ -1,6 +1,6 @@
 {
   "name": "openaware",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "description": "Live desktop and camera awareness with cooperating Observer and Operator AI roles",
   "license": "MIT",
@@ -52,6 +52,7 @@
     ],
     "asar": true,
     "win": {
+      "icon": "assets/openaware-icon.ico",
       "target": [
         "nsis"
       ]

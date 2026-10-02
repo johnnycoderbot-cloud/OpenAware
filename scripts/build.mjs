@@ -1,9 +1,21 @@
 import { build as bundle } from "esbuild";
 import { build as viteBuild } from "vite";
 import { resolve } from "node:path";
-import { mkdir } from "node:fs/promises";
+import { mkdir, copyFile } from "node:fs/promises";
 
 await mkdir("dist", { recursive: true });
+await mkdir("dist/capture", { recursive: true });
+await copyFile("apps/desktop/capture/index.html", "dist/capture/index.html");
+await bundle({
+  entryPoints: ["apps/desktop/capture/capture.ts"],
+  outfile: "dist/capture/capture.js",
+  bundle: true,
+  platform: "browser",
+  format: "iife",
+  target: "chrome150",
+  sourcemap: false,
+  logLevel: "info",
+});
 for (const [name, entry] of Object.entries({
   main: "apps/desktop/main/index.ts",
   preload: "apps/desktop/preload/index.ts",

@@ -2,6 +2,8 @@ import { contextBridge, ipcRenderer } from "electron";
 import type {
   OpenAwareBridge,
   DesktopState,
+  DesktopCaptureFrame,
+  DesktopCaptureError,
   Snapshot,
 } from "../../../packages/contracts/src/index";
 
@@ -32,6 +34,32 @@ const bridge: OpenAwareBridge = {
   listDesktopSources: () => ipcRenderer.invoke("openaware:list-desktop"),
   selectDesktopSource: (id) =>
     ipcRenderer.invoke("openaware:select-desktop", id),
+  startDesktopCapture: (sourceId, captureId) =>
+    ipcRenderer.invoke("openaware:start-desktop-capture", sourceId, captureId),
+  stopDesktopCapture: (sourceId, captureId) =>
+    ipcRenderer.invoke("openaware:stop-desktop-capture", sourceId, captureId),
+  onDesktopFrame: (callback) => {
+    if (typeof callback !== "function")
+      throw new Error("Desktop frame callback must be a function");
+    const listener = (
+      _event: Electron.IpcRendererEvent,
+      frame: DesktopCaptureFrame,
+    ): void => callback(frame);
+    ipcRenderer.on("openaware:desktop-frame", listener);
+    return () =>
+      ipcRenderer.removeListener("openaware:desktop-frame", listener);
+  },
+  onDesktopError: (callback) => {
+    if (typeof callback !== "function")
+      throw new Error("Desktop error callback must be a function");
+    const listener = (
+      _event: Electron.IpcRendererEvent,
+      error: DesktopCaptureError,
+    ): void => callback(error);
+    ipcRenderer.on("openaware:desktop-error", listener);
+    return () =>
+      ipcRenderer.removeListener("openaware:desktop-error", listener);
+  },
   executePlan: (planId) => ipcRenderer.invoke("openaware:execute-plan", planId),
   stopAll: () => ipcRenderer.invoke("openaware:stop"),
   getDesktopState: () => ipcRenderer.invoke("openaware:desktop-state"),
