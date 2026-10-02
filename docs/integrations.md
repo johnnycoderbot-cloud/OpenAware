@@ -1,6 +1,6 @@
 # Integration evidence and prototype gates
 
-Verified: 2026-10-02. Recheck schemas and license requirements when implementing. Vendor documentation proves a documented interface, not compatibility with our unbuilt application or a specific installed build.
+Verified: 2026-10-02. Recheck schemas and license requirements when implementing. Vendor documentation establishes documented interfaces. The [v0.1 prototype](prototype.md) exercises local provider adapters with mock servers; compatibility with real models and specific installed builds remains unverified.
 
 ## Evidence levels
 
@@ -88,4 +88,4 @@ Computer-control APIs run in a separate action worker with target-window identit
 
 OpenAware original code/docs: MIT. LM Studio/Bionic remain separately licensed products; reference APIs rather than bundling proprietary applications. OBS, native media decoders, SDKs, speech components, and model weights require a release license inventory. Prefer an external OBS installation for the alpha. Do not redistribute model weights or embed media binaries before verifying their specific licenses. [LM Studio application terms](https://lmstudio.ai/app-terms)
 
-Electron's security guidance supports the proposed isolated renderer, sandbox, narrow preload bridge, and explicit permission handlers. This is a design requirement, not proof of a secure unbuilt app. [Electron security](https://www.electronjs.org/docs/latest/tutorial/security)
+Electron's security guidance supports the isolated renderer, sandbox, narrow preload bridge, and explicit permission handlers. The prototype implements these boundaries; the guidance alone does not certify the application. [Electron security](https://www.electronjs.org/docs/latest/tutorial/security)

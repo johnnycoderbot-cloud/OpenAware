@@ -2,7 +2,7 @@
 
 ## Current state
 
-This is a planning foundation. README must remain truthful about implemented and unimplemented capabilities. Read PLAN.md, docs/contracts.md, docs/integrations.md, and the assigned OA slice before changing implementation files.
+This is a developer prototype backed by a complete release plan. README must remain truthful about implemented and unimplemented capabilities. Read PLAN.md, docs/prototype.md, docs/contracts.md, docs/integrations.md, and the assigned OA slice before changing implementation files.
 
 ## OMX v2 operating model
 

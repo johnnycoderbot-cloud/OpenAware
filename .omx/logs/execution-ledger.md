@@ -17,3 +17,5 @@ Date: 2026-10-02. This ledger tracks the authorized planning/repository task, no
 | Accepted handoff | Planning/repository deliverable complete; application implementation remains planned | Product and architecture reviewers approved; next development entry point is OA-001 in the published backlog |
 
 No application, real feed, API key, trade, or computer action has been executed as part of the plan. No detached OMX team workers are claimed; native subagents performed in-session planning.
+
+Subsequent authorization to build the application is tracked in the [v0.1 implementation ledger](implementation-v0.1.md). The planning-only statement above describes the earlier foundation task.

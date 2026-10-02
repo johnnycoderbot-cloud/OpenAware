@@ -1,6 +1,6 @@
 # OpenAware architecture
 
-Status: proposed design; no runtime application has been implemented or benchmarked. Baseline: Windows first, public repository, MIT project code. Related: [product](product-spec.md), [contracts](contracts.md), [privacy and security](security-privacy.md), [integration evidence](integrations.md), [roadmap](roadmap.md).
+Status: target architecture for the full roadmap. The [v0.1 prototype](prototype.md) implements a subset; native effects and sustained performance remain unverified. Baseline: Windows first, public repository, MIT project code. Related: [product](product-spec.md), [contracts](contracts.md), [privacy and security](security-privacy.md), [integration evidence](integrations.md), [roadmap](roadmap.md).
 
 ## System responsibility
 

@@ -1,6 +1,6 @@
 # OpenAware complete planning index
 
-Baseline date: 2026-10-02. Scope: public open-source planning repository, before application implementation.
+Baseline date: 2026-10-02. Scope: public open-source release roadmap. A [v0.1 prototype](docs/prototype.md) is now implemented against the first functional increment; planned gates remain separate from its tested behavior.
 
 ## Build outcome
 
