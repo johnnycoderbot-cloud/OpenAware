@@ -24,3 +24,7 @@ These observations establish local preview/layout behavior, not real model infer
 ## Delivery boundary
 
 Final acceptance requires matching public source/tag, successful Windows/Ubuntu application and planning CI at that exact commit, and uploaded installer/checksum digests matching local files. Private session state records external results after publication. Real model vision, cameras, native input effects, mixed DPI, Bionic, sustained performance and sleep/lock behavior remain outside this layout release's evidence.
+
+## Subsequent delivery
+
+The layout changes in this local 0.2.4 slice were subsequently delivered inside the public [0.3.0 prerelease](https://github.com/johnnycoderbot-cloud/OpenAware/releases/tag/v0.3.0). No separate 0.2.4 release was created. The owner later authorized replacing the lower empty pane with Video memory; current acceptance and uploaded artifact evidence are in the [0.3 ledger](implementation-v0.3.md). Earlier pending-delivery statements above describe the original connectivity failure.
