@@ -158,12 +158,21 @@ test("isolated native owners capture two exact fixture windows and Stop releases
         (source) => source.lastFrameAt || 0,
       ),
     );
+    // Adding B makes it primary. Use the visible source Focus buttons so the
+    // native regression also exercises compact windows, where the dropdown
+    // is intentionally hidden. Each focus change exposes the other button.
     await page
-      .getByRole("combobox", { name: "Focused desktop source" })
-      .selectOption(sourceIds[1]!);
+      .getByRole("button", {
+        name: `Focus ${fixtureNames[0]!}`,
+        exact: true,
+      })
+      .click();
     await page
-      .getByRole("combobox", { name: "Focused desktop source" })
-      .selectOption(sourceIds[0]!);
+      .getByRole("button", {
+        name: `Focus ${fixtureNames[1]!}`,
+        exact: true,
+      })
+      .click();
     await expect
       .poll(() =>
         page.evaluate(async (previous) => {
