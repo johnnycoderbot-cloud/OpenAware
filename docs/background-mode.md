@@ -1,16 +1,18 @@
 # Background monitoring with tray controls
 
-OpenAware v0.2.2 retains the background controls introduced in v0.2: it can hide its dashboard while the currently configured capture and awareness session continues. In this release, headless means a hidden dashboard with a system tray in the same interactive Windows desktop session. Sources and native permissions remain attached to that session.
+OpenAware v0.2.3 retains the background controls introduced in v0.2: it can hide its dashboard while the currently configured capture and awareness session continues. In this release, headless means a hidden dashboard with a system tray in the same interactive Windows desktop session. Sources and native permissions remain attached to that session.
 
 ## Configure, then hide
 
-1. Open the dashboard and choose the feeds you want to observe. For a screen, click **Add source**, choose **Monitor**, select the screen, add it, then click **Connect** on its source tile. Repeat for your other monitor. Capture starts only after explicit selection and connection.
+1. Open the dashboard and choose the feeds you want to observe. For a screen, click **Add source**, choose **Monitor**, select the screen, then click **Connect source** in the dialog. This adds the source and starts its preview. Repeat for your other monitor. Capture starts only after this explicit selection and connection.
 2. For AI monitoring, configure LM Studio or Ollama in Connections, select a vision model, and pass the displayed synthetic vision test. For motion-only monitoring, disable AI analysis and enable Motion alerts on the relevant sources.
 3. Click **Start watching** if you want monitoring. Live preview requires neither a model nor this button; connecting the source starts its preview.
 4. Click **Background** in the top bar. The existing dashboard is hidden; its source pipelines and current session continue.
 5. Use the OpenAware system-tray menu to show the dashboard, stop the session, or quit.
 
 Entering background mode does not start monitoring, select another source or model, or grant computer-action permission. Operator steps still require the same native review and approval for every step.
+
+The dashboard is one workspace with each source, chat, actions and activity view in an independent pane. Two monitor panes default to side by side; three or four desktop panes use two-column rows, with cameras below. Drag handles, Arrange icon menus and dividers change the layout. Global Reset, source-list changes and returning to Overview restore defaults. Hiding or showing the existing dashboard preserves its layout and live connections. These layout controls do not expand the four-source limit or change capture/model permissions.
 
 ## Controls and window behavior
 

@@ -2,13 +2,13 @@
 
 An open-source AI companion for live desktop and camera awareness, designed to work with LM Studio and Bionic.
 
-**Project status: v0.2.2 developer prototype.** The Electron application implements live source previews, local AI workflows, and background monitoring with tray controls. Version 0.2.2 adds movable and resizable workspace panes, readable lower live feeds and compact chat/settings controls, retaining the isolated desktop capture workers and blue tray/app icon introduced in v0.2.1. The original plan remains the release roadmap; personal monitor capture, real cameras/models, and native input effects still need their documented acceptance evidence. See [prototype status](docs/prototype.md) for the implementation boundary and measured checks.
+**Project status: v0.2.3 developer prototype.** Overview is one workspace with independently movable and resizable source, chat, actions, and activity panes. Two monitor panes start side by side; three or four desktop panes use two columns, with cameras below. The Electron application retains compact chat/settings controls, isolated desktop capture workers, and background monitoring with the blue tray/app icon. The original plan remains the release roadmap; personal monitor capture, real cameras/models, and native input effects still need their documented acceptance evidence. See [prototype status](docs/prototype.md) for the implementation boundary and checks.
 
 OpenAware is intended to let you watch selected monitors, virtual-camera sources, and real cameras together; ask an AI about what is visible; receive alerts; and authorize specific actions on your actual computer. Trading is one workspace, alongside camera monitoring and everyday desktop assistance.
 
-![OpenAware v0.2.2 desktop prototype with synthetic source previews](assets/prototype-desktop-multisource.png)
+![OpenAware v0.2.3 desktop prototype with synthetic source previews](assets/prototype-desktop-multisource.png)
 
-_Actual v0.2.2 Electron interface with synthetic demo/camera previews. This illustrates the populated layout; it does not show real camera capture or model output. A fresh launch has no selected feeds. The original [AI-generated interface concept](assets/app-concept.png) remains a planning illustration._
+_Actual v0.2.3 Electron interface with synthetic demo/camera previews. This illustrates the populated layout; it does not show real camera capture or model output. A fresh launch has no selected feeds. The original [AI-generated interface concept](assets/app-concept.png) remains a planning illustration._
 
 ## Read the plan
 
@@ -53,7 +53,7 @@ The prototype also implements a local Ollama adapter. OpenRouter, OpenAI, and NV
 
 ## Windows prototype
 
-Download the [v0.2.2 Windows x64 installer](https://github.com/johnnycoderbot-cloud/OpenAware/releases/download/v0.2.2/OpenAware.Setup.0.2.2.exe). The [developer prerelease](https://github.com/johnnycoderbot-cloud/OpenAware/releases/tag/v0.2.2) includes its SHA-256 checksum. Distribution is unsigned; packaged workflow checks and their limits are recorded in the [v0.2.2 implementation ledger](.omx/logs/implementation-v0.2.2.md). The installer itself has not been exercised. No model is bundled; real cameras/models, personal monitor and mixed-DPI capture, native input effects, and Bionic compatibility still need live acceptance tests.
+Download the [v0.2.3 Windows x64 installer](https://github.com/johnnycoderbot-cloud/OpenAware/releases/download/v0.2.3/OpenAware.Setup.0.2.3.exe). The [developer prerelease](https://github.com/johnnycoderbot-cloud/OpenAware/releases/tag/v0.2.3) includes its SHA-256 checksum. Distribution is unsigned; packaged workflow checks and their limits are recorded in the [v0.2.3 implementation ledger](.omx/logs/implementation-v0.2.3.md). The installer itself has not been exercised. No model is bundled; real cameras/models, personal monitor and mixed-DPI capture, native input effects, and Bionic compatibility still need live acceptance tests.
 
 ## Run from source
 
@@ -64,7 +64,9 @@ npm ci
 npm start
 ```
 
-No source starts automatically. For live screens, click **Add source**, select **Monitor**, choose the screen, add it, then click **Connect** on its source tile. Repeat for your second monitor; both feeds have readable live previews. Use a pane drag handle to arrange the workspace, drop beside/above/below another pane, and drag a divider to resize. **Move…** offers keyboard placement; focused dividers accept arrow keys. **Stack** and **Side by side** arrange individual feeds; local scrolling keeps wider layouts reachable. The workspace's **Reset layout** restores the main and feed arrangements. Small windows stack main panes in your chosen order. Choose **Window** instead to capture one application, or select a camera/OBS device for a camera feed. **Demo** shows generated content and does not capture your screen.
+A fresh launch has no selected feeds. For live screens, click the top-bar **Add source** control, select **Monitor**, choose the screen, then click **Connect source** in the dialog. This starts the selected preview; there is no second connection step on the pane. Repeat for your second monitor. Choose **Window** instead to capture one application, or select a camera/OBS device for a camera feed. **Demo** shows generated content and does not capture your screen. The prototype supports four simultaneous sources in total.
+
+Each source, chat, actions, and activity pane has one frame and header on the same workspace. Two monitor panes start side by side; three or four desktop panes form two-column rows, with cameras below. Drag a pane handle and drop beside, above, or below another pane; pull dividers to resize. The header's **Arrange** icon menu offers keyboard placement, and focused dividers accept arrow keys. The top-bar **Reset dashboard layout** control restores defaults. Adding or removing sources and returning to Overview also restore the default arrangement; layout changes preserve the remaining live connections. Local scrolling keeps custom wider arrangements reachable. Compact windows show panes in a single vertical order.
 
 Each feed's settings button holds AI analysis, motion and privacy controls. In chat, **Sources** chooses which connected feeds a question uses; the message history and composer remain the main view.
 

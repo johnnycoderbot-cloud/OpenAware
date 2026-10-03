@@ -3241,6 +3241,18 @@ h2 {
   min-width: 0;
   min-height: 0;
 }
+.dock-viewport {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.dock-viewport > .dock-board {
+  width: 100%;
+  height: 100%;
+  flex: none;
+}
 .dock-pane {
   position: absolute;
   min-width: 0;
@@ -3624,27 +3636,483 @@ h2 {
   justify-content: flex-end;
 }
 @media (max-width: 900px) {
-  .dashboard-dock-layout > .dock-board {
+  .dashboard-dock-layout > .dock-viewport > .dock-board {
     display: flex;
     flex-direction: column;
     gap: 12px;
     flex: none;
   }
-  .dashboard-dock-layout > .dock-board > .dock-pane {
+  .dashboard-dock-layout > .dock-viewport > .dock-board > .dock-pane {
     position: relative;
     inset: auto !important;
     width: 100% !important;
     height: auto !important;
     min-height: 160px;
   }
-  .dashboard-dock-layout > .dock-board > .dock-pane > .dock-pane-content {
+  .dashboard-dock-layout
+    > .dock-viewport
+    > .dock-board
+    > .dock-pane
+    > .dock-pane-content {
     max-height: 680px;
   }
-  .dashboard-dock-layout > .dock-board > .dock-divider {
+  .dashboard-dock-layout > .dock-viewport > .dock-board > .dock-divider {
     display: none;
   }
   .dashboard-dock-layout > .dock-layout-tools > span {
     display: inline;
     max-width: 70%;
+  }
+}
+
+/* Workspace controls share the navigation bar instead of a second status row. */
+.app-navigation {
+  height: 48px;
+  flex-wrap: nowrap;
+  gap: 8px;
+  padding: 0 12px;
+}
+.app-navigation .brand {
+  font-size: 19px;
+  gap: 6px;
+}
+.app-navigation .brand-symbol {
+  width: 26px;
+  height: 26px;
+}
+.app-navigation .brand-symbol svg {
+  width: 22px;
+  height: 22px;
+}
+.app-navigation .opensource-badge {
+  padding: 4px 7px;
+  font-size: 10px;
+}
+.app-navigation nav {
+  order: 0;
+  width: auto;
+  height: 100%;
+  flex: 0 0 auto;
+  justify-content: flex-start;
+}
+.app-navigation .nav-item {
+  flex: 0 0 auto;
+  padding: 0 10px;
+  gap: 6px;
+  font-size: 13px;
+  white-space: nowrap;
+  border-bottom-width: 2px;
+}
+.app-navigation .nav-item svg {
+  width: 16px;
+  height: 16px;
+}
+.app-navigation .nav-count {
+  margin-left: 0;
+  padding: 1px 4px;
+  font-size: 9px;
+}
+.workspace-controls {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  flex: 0 0 auto;
+}
+.workspace-controls .icon-button,
+.workspace-controls .button {
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  min-height: 28px;
+  padding: 0;
+  gap: 0;
+  border-radius: 4px;
+}
+.workspace-controls svg {
+  width: 15px;
+  height: 15px;
+}
+.workspace-source-select {
+  width: 85px;
+  min-width: 0;
+  height: 28px;
+  padding: 2px 5px;
+  border: 1px solid #2d4156;
+  border-radius: 4px;
+  background: #162433;
+  color: #bfcede;
+  font-size: 11px;
+  color-scheme: dark;
+}
+.app-navigation .topbar-right {
+  flex: 0 0 auto;
+  gap: 5px;
+  margin-left: auto;
+}
+.app-navigation .status-pill {
+  display: flex;
+  padding: 4px 7px;
+  gap: 5px;
+  font-size: 10px;
+  white-space: nowrap;
+}
+.app-navigation .topbar-right .button {
+  height: 28px;
+  min-height: 28px;
+  padding: 0 8px;
+  gap: 5px;
+  border-radius: 4px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.app-navigation .topbar-right .icon-button {
+  width: 26px;
+  height: 26px;
+  min-width: 26px;
+  min-height: 26px;
+  padding: 0;
+}
+.overview-shell .overview-main {
+  height: calc(100dvh - 48px);
+  padding: 10px;
+}
+@media (max-width: 1250px) {
+  .app-navigation {
+    padding: 0 10px;
+    gap: 7px;
+  }
+  .app-navigation .brand {
+    font-size: 18px;
+  }
+  .app-navigation .nav-item {
+    font-size: 12px;
+    padding: 0 8px;
+  }
+  .app-navigation .nav-item svg {
+    width: 15px;
+    height: 15px;
+  }
+}
+@media (max-width: 900px) {
+  .workspace-source-select {
+    display: none;
+  }
+  .app-navigation .brand > span:last-child {
+    display: none;
+  }
+  .overview-shell .overview-main {
+    height: auto;
+    overflow: visible;
+  }
+}
+@media (max-width: 760px) {
+  .app-navigation .status-pill {
+    display: none;
+  }
+}
+@media (max-width: 640px) {
+  .app-navigation {
+    gap: 5px;
+    padding: 0 8px;
+  }
+  .app-navigation .nav-item {
+    width: 30px;
+    min-width: 30px;
+    padding: 0;
+    justify-content: center;
+  }
+  .app-navigation .nav-item > span:not(.nav-count) {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .app-navigation .nav-count {
+    display: none;
+  }
+}
+@media (max-width: 480px) {
+  .app-navigation .background-button {
+    width: 28px;
+    padding: 0;
+    gap: 0;
+    font-size: 0;
+  }
+}
+
+/* One frame per independently docked dashboard pane. */
+.dashboard-dock-layout > .dock-viewport > .dock-board > .dock-pane {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: 40px minmax(0, 1fr);
+  border-color: #2c4052;
+  border-radius: 6px;
+  background: #111c27;
+}
+.dashboard-dock-layout .dock-pane-handle {
+  min-width: 0;
+  gap: 7px;
+  padding: 0 9px;
+  background: #152331;
+  border-bottom-color: #293d4f;
+}
+.dock-pane-icon {
+  display: flex;
+  align-items: center;
+  color: #9ab9d3;
+  flex-shrink: 0;
+}
+.dock-pane-icon svg {
+  width: 16px;
+  height: 16px;
+}
+.dashboard-dock-layout .dock-pane-caption {
+  font-size: 13px;
+}
+.dock-pane-actions {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  flex-shrink: 0;
+}
+[data-pane-id="assistant"] > .dock-pane-handle {
+  display: grid;
+  grid-template-columns: 24px 16px minmax(0, 1fr) minmax(0, 40%) 24px;
+}
+[data-pane-id="assistant"] > .dock-pane-handle > .dock-pane-actions {
+  width: 100%;
+  max-width: none;
+  min-width: 0;
+  flex-shrink: 1;
+}
+[data-pane-id="assistant"] .session-model {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  height: 26px;
+  padding: 0 5px;
+  gap: 4px;
+  border-radius: 4px;
+  font-size: 11px;
+}
+[data-pane-id="assistant"] .session-model > span:first-of-type {
+  min-width: 0;
+  max-width: none;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dock-pane-actions .button,
+.dock-pane-actions .text-button {
+  height: 26px;
+  min-height: 26px;
+  padding: 0 7px;
+  gap: 4px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.dock-pane-actions .icon-button {
+  width: 26px;
+  height: 26px;
+  min-width: 26px;
+  min-height: 26px;
+}
+.dock-pane-actions .button svg,
+.dock-pane-actions .text-button svg {
+  width: 13px;
+  height: 13px;
+}
+.dock-header-source-count {
+  color: #92aabe;
+  font-size: 10px;
+  font-weight: 400;
+  white-space: nowrap;
+}
+.pane-arrange-menu {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+  color: #a1b7cb;
+  border-radius: 4px;
+}
+.pane-arrange-menu > svg {
+  width: 16px;
+  height: 16px;
+  pointer-events: none;
+}
+.pane-arrange-menu .pane-arrange-select {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+.pane-arrange-menu:hover {
+  background: #2a405555;
+}
+.pane-arrange-menu:focus-within {
+  outline: 2px solid #70b5ff;
+  outline-offset: -2px;
+}
+.dashboard-dock-layout .dock-pane-content > .panel,
+.dashboard-dock-layout .desktop-panel,
+.dashboard-dock-layout .camera-panel {
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+}
+.dashboard-dock-layout .feeds-section {
+  gap: 0;
+  padding: 0;
+}
+.dashboard-dock-layout .desktop-empty,
+.dashboard-dock-layout .camera-empty {
+  min-height: 0;
+  height: 100%;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  justify-content: center;
+  padding: 20px;
+}
+.dashboard-dock-layout .source-pane .source-tile {
+  position: relative;
+  height: 100%;
+  min-height: 180px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.dashboard-dock-layout .source-pane .source-preview {
+  height: 100%;
+  min-height: 180px;
+  aspect-ratio: auto;
+  grid-row: 1;
+  border: 0;
+  border-radius: 0;
+  background: #08111a;
+}
+.source-pane .source-status {
+  font-size: 9px;
+}
+.source-pane .preview-top {
+  top: 8px;
+  left: 8px;
+  right: 8px;
+}
+.source-pane .preview-bottom {
+  z-index: 2;
+  bottom: 34px;
+  padding: 4px 8px;
+  font-size: 10px;
+  background: transparent;
+  text-shadow: 0 1px 3px #000;
+}
+.dashboard-dock-layout .source-pane .source-bottom {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 4;
+  grid-column: 1 / -1;
+  grid-row: 1;
+  height: 32px;
+  padding: 0 8px;
+  border: 0;
+  background: linear-gradient(transparent, #07131bee);
+}
+.dashboard-dock-layout .source-pane .mask-warning {
+  position: absolute;
+  bottom: 32px;
+  left: 0;
+  right: 0;
+  z-index: 4;
+  grid-column: 1 / -1;
+  grid-row: 1;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: 0;
+  background: #442f19f0;
+}
+.source-pane .source-tile:has(> .mask-warning) .preview-bottom {
+  bottom: 60px;
+}
+.dashboard-dock-layout .chat-compose {
+  border: 0;
+  padding: 8px;
+  background: transparent;
+}
+.dashboard-dock-layout .chat-compose-tools {
+  position: absolute;
+  left: 16px;
+  bottom: 14px;
+  z-index: 2;
+  min-height: 20px;
+  margin: 0;
+}
+.dashboard-dock-layout .question-sources-button {
+  min-height: 20px;
+  font-size: 10px;
+}
+.dashboard-dock-layout .input-composer {
+  min-width: 0;
+  width: 100%;
+  padding: 8px 8px 28px;
+  border-color: #33495c;
+  border-radius: 6px;
+  background: #0d1925;
+}
+.dashboard-dock-layout .input-composer textarea {
+  width: 0;
+  min-width: 0;
+  flex: 1 1 0;
+}
+.dashboard-dock-layout .send-button {
+  width: 32px;
+  height: 32px;
+}
+.dashboard-dock-layout .operator-summary-actions {
+  padding: 6px 10px;
+}
+.dashboard-dock-layout .operator-summary-actions .button {
+  height: 32px;
+  min-height: 32px;
+  padding: 0 10px;
+}
+@media (max-width: 900px) {
+  .dashboard-dock-layout > .dock-viewport {
+    flex: none;
+    overflow: visible;
+  }
+  .dashboard-dock-layout > .dock-viewport > .dock-board {
+    height: auto;
+    gap: 8px;
+  }
+  .dashboard-dock-layout
+    > .dock-viewport
+    > .dock-board
+    > [data-pane-id="assistant"] {
+    min-height: 320px;
+  }
+  .dashboard-dock-layout
+    > .dock-viewport
+    > .dock-board
+    > [data-pane-id="actions"] {
+    min-height: 88px;
   }
 }

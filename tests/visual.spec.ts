@@ -1,7 +1,14 @@
-import { _electron as electron, expect, test } from "@playwright/test";
+import {
+  _electron as electron,
+  expect,
+  test,
+  type ElectronApplication,
+  type Locator,
+  type Page,
+} from "@playwright/test";
 import { resolve } from "node:path";
 
-test("desktop and main panes dock and resize while every synthetic feed stays live", async () => {
+async function launchVisual() {
   const env: Record<string, string> = Object.fromEntries(
     Object.entries(process.env).flatMap(([key, value]) =>
       value === undefined ? [] : [[key, value]],
@@ -20,15 +27,304 @@ test("desktop and main panes dock and resize while every synthetic feed stays li
     cwd: resolve("."),
     env,
   });
-  try {
-    const page = await app.firstWindow();
-    await app.evaluate(({ BrowserWindow }) => {
-      const window = BrowserWindow.getAllWindows()[0]!;
-      window.webContents.setBackgroundThrottling(false);
-      window.showInactive();
-      window.setContentSize(1440, 960);
+  const page = await app.firstWindow();
+  await app.evaluate(({ BrowserWindow }) => {
+    const window = BrowserWindow.getAllWindows()[0]!;
+    window.webContents.setBackgroundThrottling(false);
+    window.showInactive();
+    window.setMinimumSize(600, 500);
+    window.setContentSize(1440, 960);
+  });
+  return { app, page };
+}
+
+async function viewport(
+  app: ElectronApplication,
+  page: Page,
+  width: number,
+  height: number,
+) {
+  await app.evaluate(
+    ({ BrowserWindow }, size) =>
+      BrowserWindow.getAllWindows()[0]!.setContentSize(size.width, size.height),
+    { width, height },
+  );
+  await expect
+    .poll(() =>
+      page.evaluate(() => ({ width: innerWidth, height: innerHeight })),
+    )
+    .toEqual({ width, height });
+}
+
+function tile(page: Page, id: string) {
+  return page.locator(`[data-testid="source-tile"][data-source-id="${id}"]`);
+}
+function pane(page: Page, id: string) {
+  return page
+    .getByTestId("dashboard-dock-board")
+    .locator(`:scope > [data-pane-id="${id}"]`);
+}
+
+async function addFixture(
+  page: Page,
+  kind: "demo" | "camera" | "virtual_camera",
+  name: string,
+) {
+  const id = await page.evaluate(
+    async ({ kind, name }) => {
+      const id = crypto.randomUUID();
+      await window.openAware!.invoke({
+        type: "source.add",
+        source: {
+          id,
+          name,
+          kind,
+          deviceId:
+            kind === "demo" ? `synthetic-${id}` : "synthetic-camera-fixture",
+        },
+      });
+      await window.openAware!.invoke({
+        type: "source.update",
+        sourceId: id,
+        patch: { analysisEnabled: false },
+      });
+      return id;
+    },
+    { kind, name },
+  );
+  await tile(page, id)
+    .getByRole("button", { name: "Connect", exact: true })
+    .click();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        async (id) =>
+          (await window.openAware!.invoke({ type: "state.get" })).sources.find(
+            (source) => source.id === id,
+          )?.lastFrameAt ?? 0,
+        id,
+      ),
+    )
+    .toBeGreaterThan(0);
+  return id;
+}
+
+async function generatedCamera(page: Page) {
+  // Only a locally painted canvas supplies the camera fixtures. Actual video
+  // delivery runs without requesting hardware or recording personal feeds.
+  await page.evaluate(() => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 640;
+    canvas.height = 360;
+    const context = canvas.getContext("2d")!;
+    const paint = () => {
+      context.fillStyle = "#143549";
+      context.fillRect(0, 0, 640, 360);
+      context.fillStyle = "#19495e";
+      context.fillRect(35, 40, 220, 140);
+      context.fillStyle = "#3879a5";
+      context.fillRect(50, 55, 190, 110);
+      context.fillStyle = "#34545f";
+      context.fillRect(100, 230, 470, 25);
+      context.fillRect(120, 255, 15, 80);
+      context.fillRect(535, 255, 15, 80);
+      context.fillStyle = "#15232c";
+      context.fillRect(290, 155, 190, 100);
+      context.fillStyle = "#4696e8";
+      context.fillRect(300, 165, 170, 75);
+      context.fillStyle = "#66cfac";
+      context.beginPath();
+      context.arc(
+        535,
+        125,
+        20 + 5 * Math.sin(Date.now() / 400),
+        0,
+        Math.PI * 2,
+      );
+      context.fill();
+      context.fillStyle = "#e2f1ff";
+      context.font = "bold 18px sans-serif";
+      context.fillText("SYNTHETIC CAMERA FIXTURE", 30, 325);
+      requestAnimationFrame(paint);
+    };
+    paint();
+    const stream = canvas.captureStream(15);
+    Object.defineProperty(navigator.mediaDevices, "getUserMedia", {
+      configurable: true,
+      value: async (constraints: MediaStreamConstraints) => {
+        const video = constraints.video as MediaTrackConstraints;
+        if (
+          (video.deviceId as ConstrainDOMStringParameters)?.exact !==
+          "synthetic-camera-fixture"
+        )
+          throw new Error("Only the synthetic fixture is available");
+        return stream.clone();
+      },
     });
+  });
+}
+
+async function frames(page: Page) {
+  return page.evaluate(async () =>
+    (await window.openAware!.invoke({ type: "state.get" })).sources.map(
+      (source) => ({
+        id: source.id,
+        deviceId: source.deviceId,
+        revision: source.revision,
+        status: source.status,
+        lastFrameAt: source.lastFrameAt ?? 0,
+      }),
+    ),
+  );
+}
+async function framesAdvance(
+  page: Page,
+  before: Awaited<ReturnType<typeof frames>>,
+) {
+  await expect
+    .poll(() =>
+      page.evaluate(async (previous) => {
+        const state = await window.openAware!.invoke({ type: "state.get" });
+        return {
+          ids: state.sources.map((source) => source.id),
+          live: previous.every((item) => {
+            const source = state.sources.find(
+              (source) => source.id === item.id,
+            );
+            return (
+              source?.status === "live" &&
+              (source.lastFrameAt ?? 0) > item.lastFrameAt
+            );
+          }),
+        };
+      }, before),
+    )
+    .toEqual({ ids: before.map((source) => source.id), live: true });
+}
+async function reachable(control: Locator) {
+  await control.scrollIntoViewIfNeeded();
+  await expect(control).toBeVisible();
+  await expect
+    .poll(() =>
+      control.evaluate((node) => {
+        const rect = node.getBoundingClientRect();
+        const hit = document.elementFromPoint(
+          rect.x + rect.width / 2,
+          rect.y + rect.height / 2,
+        );
+        return (
+          rect.left >= 0 &&
+          rect.right <= innerWidth + 1 &&
+          rect.top >= 0 &&
+          rect.bottom <= innerHeight + 1 &&
+          (hit === node || (!!hit && node.contains(hit)))
+        );
+      }),
+    )
+    .toBe(true);
+}
+
+async function fullyContained(control: Locator, region: string, label: string) {
+  await expect(control).toBeVisible();
+  await expect
+    .poll(
+      () =>
+        control.evaluate((node, selector) => {
+          const box = node.getBoundingClientRect();
+          const area = node.closest(selector)!.getBoundingClientRect();
+          const pane = node.closest(".dock-pane")!.getBoundingClientRect();
+          const inside = (bounds: DOMRect) =>
+            box.left >= bounds.left - 0.5 &&
+            box.right <= bounds.right + 0.5 &&
+            box.top >= bounds.top - 0.5 &&
+            box.bottom <= bounds.bottom + 0.5;
+          return {
+            region: inside(area),
+            pane: inside(pane),
+            viewport:
+              box.left >= 0 &&
+              box.right <= innerWidth + 0.5 &&
+              box.top >= 0 &&
+              box.bottom <= innerHeight + 0.5,
+          };
+        }, region),
+      { message: `${label} must fit completely inside its pane and viewport` },
+    )
+    .toEqual({ region: true, pane: true, viewport: true });
+}
+async function pairPosition(
+  a: Locator,
+  b: Locator,
+  side: "left" | "right" | "top" | "bottom",
+) {
+  const first = await a.boundingBox();
+  const second = await b.boundingBox();
+  if (!first || !second) return false;
+  if (side === "left" || side === "right")
+    return (
+      Math.abs(first.y - second.y) < 2 &&
+      (side === "left"
+        ? second.x + second.width <= first.x + 2
+        : first.x + first.width <= second.x + 2)
+    );
+  return (
+    Math.abs(first.x - second.x) < 2 &&
+    (side === "top"
+      ? second.y + second.height <= first.y + 2
+      : first.y + first.height <= second.y + 2)
+  );
+}
+async function dividerBetween(
+  page: Page,
+  a: Locator,
+  b: Locator,
+  axis: "horizontal" | "vertical",
+) {
+  const first = (await a.boundingBox())!;
+  const second = (await b.boundingBox())!;
+  const id = await page
+    .getByTestId("dashboard-dock-board")
+    .locator(`.dock-divider.${axis}`)
+    .evaluateAll(
+      (nodes, { first, second, axis }) => {
+        const sorted = [first, second].sort((a, b) =>
+          axis === "horizontal" ? a.x - b.x : a.y - b.y,
+        );
+        const left = sorted[0]!;
+        const right = sorted[1]!;
+        return nodes
+          .find((node) => {
+            const rect = node.getBoundingClientRect();
+            return axis === "horizontal"
+              ? rect.x >= left.x + left.width - 2 &&
+                  rect.right <= right.x + 2 &&
+                  Math.abs(rect.y - left.y) < 2
+              : rect.y >= left.y + left.height - 2 &&
+                  rect.bottom <= right.y + 2 &&
+                  Math.abs(rect.x - left.x) < 2;
+          })
+          ?.getAttribute("data-divider-id");
+      },
+      { first, second, axis },
+    );
+  expect(id).toBeTruthy();
+  return page
+    .getByTestId("dashboard-dock-board")
+    .locator(`[data-divider-id="${id}"]`);
+}
+
+test("one workspace docks direct live sources and sidebar panes without restarting captures", async () => {
+  const { app, page } = await launchVisual();
+  try {
+    const dashboard = page.getByTestId("dashboard-dock-board");
+    await expect(dashboard).toHaveCount(1);
+    await expect(
+      page.locator(".camera-empty, [data-pane-id='cameras']"),
+    ).toHaveCount(0);
     await page.getByTestId("add-source").click();
+    await page
+      .getByRole("textbox", { name: "Source name", exact: true })
+      .fill("Primary synthetic monitor");
     await page
       .getByRole("button", { name: "Connect source", exact: true })
       .click();
@@ -41,67 +337,9 @@ test("desktop and main panes dock and resize while every synthetic feed stays li
         ),
       )
       .toBeGreaterThan(0);
-    // A generated canvas is the only camera input. No hardware permission or
-    // personal feed is requested. Actual HTMLVideoElement delivery still runs.
-    const cameraId = await page.evaluate(async () => {
-      const canvas = document.createElement("canvas");
-      canvas.width = 640;
-      canvas.height = 360;
-      const context = canvas.getContext("2d")!;
-      const paint = () => {
-        context.fillStyle = "#143549";
-        context.fillRect(0, 0, 640, 360);
-        context.fillStyle = "#19495e";
-        context.fillRect(35, 40, 220, 140);
-        context.fillStyle = "#3879a5";
-        context.fillRect(50, 55, 190, 110);
-        context.fillStyle = "#34545f";
-        context.fillRect(100, 230, 470, 25);
-        context.fillRect(120, 255, 15, 80);
-        context.fillRect(535, 255, 15, 80);
-        context.fillStyle = "#15232c";
-        context.fillRect(290, 155, 190, 100);
-        context.fillStyle = "#4696e8";
-        context.fillRect(300, 165, 170, 75);
-        context.fillStyle = "#66cfac";
-        context.beginPath();
-        context.arc(
-          535,
-          125,
-          20 + 5 * Math.sin(Date.now() / 400),
-          0,
-          Math.PI * 2,
-        );
-        context.fill();
-        context.fillStyle = "#e2f1ff";
-        context.font = "bold 18px sans-serif";
-        context.fillText("SYNTHETIC CAMERA FIXTURE", 30, 325);
-        requestAnimationFrame(paint);
-      };
-      paint();
-      const stream = canvas.captureStream(15);
-      Object.defineProperty(navigator.mediaDevices, "getUserMedia", {
-        configurable: true,
-        value: async (constraints: MediaStreamConstraints) => {
-          const video = constraints.video as MediaTrackConstraints;
-          if (
-            (video.deviceId as ConstrainDOMStringParameters)?.exact !==
-            "synthetic-camera-fixture"
-          )
-            throw new Error("Only the synthetic fixture is available");
-          return stream.clone();
-        },
-      });
-      const id = crypto.randomUUID();
-      await window.openAware!.invoke({
-        type: "source.add",
-        source: {
-          id,
-          name: "Camera fixture (synthetic)",
-          kind: "camera",
-          deviceId: "synthetic-camera-fixture",
-        },
-      });
+    const firstId = await page.evaluate(async () => {
+      const id = (await window.openAware!.invoke({ type: "state.get" }))
+        .sources[0]!.id;
       await window.openAware!.invoke({
         type: "source.update",
         sourceId: id,
@@ -109,147 +347,70 @@ test("desktop and main panes dock and resize while every synthetic feed stays li
       });
       return id;
     });
-    const camera = page.getByTestId("source-tile").filter({
-      has: page.getByRole("heading", {
-        name: "Camera fixture (synthetic)",
-        exact: true,
-      }),
-    });
-    await camera.getByRole("button", { name: "Connect", exact: true }).click();
-    await expect
-      .poll(() =>
-        page.evaluate(
-          async (id) =>
-            (
-              await window.openAware!.invoke({ type: "state.get" })
-            ).sources.find((s) => s.id === id)?.lastFrameAt ?? 0,
-          cameraId,
-        ),
-      )
-      .toBeGreaterThan(0);
-    await expect(camera.locator("video")).toBeVisible();
-    const virtualCameraId = await page.evaluate(async () => {
-      const id = crypto.randomUUID();
-      await window.openAware!.invoke({
-        type: "source.add",
-        source: {
-          id,
-          name: "Virtual camera (synthetic)",
-          kind: "virtual_camera",
-          deviceId: "synthetic-camera-fixture",
-        },
-      });
-      await window.openAware!.invoke({
-        type: "source.update",
-        sourceId: id,
-        patch: { analysisEnabled: false },
-      });
-      return id;
-    });
-    const virtualCamera = page.getByTestId("source-tile").filter({
-      has: page.getByRole("heading", {
-        name: "Virtual camera (synthetic)",
-        exact: true,
-      }),
-    });
-    await virtualCamera
-      .getByRole("button", { name: "Connect", exact: true })
-      .click();
-    await expect
-      .poll(() =>
-        page.evaluate(
-          async (id) =>
-            (
-              await window.openAware!.invoke({ type: "state.get" })
-            ).sources.find((source) => source.id === id)?.lastFrameAt ?? 0,
-          virtualCameraId,
-        ),
-      )
-      .toBeGreaterThan(0);
-    await expect(virtualCamera.locator("video")).toBeVisible();
-    const secondId = await page.evaluate(async () => {
-      const id = crypto.randomUUID();
-      await window.openAware!.invoke({
-        type: "source.add",
-        source: {
-          id,
-          name: "Secondary synthetic monitor",
-          kind: "demo",
-          deviceId: "synthetic-secondary",
-        },
-      });
-      await window.openAware!.invoke({
-        type: "source.update",
-        sourceId: id,
-        patch: { analysisEnabled: false },
-      });
-      return id;
-    });
-    await page
-      .getByRole("combobox", { name: "Focused desktop source" })
-      .selectOption(secondId);
-    const secondary = page.getByTestId("source-tile").filter({
-      has: page.getByRole("heading", {
-        name: "Secondary synthetic monitor",
-        exact: true,
-      }),
-    });
-    await secondary
-      .getByRole("button", { name: "Connect", exact: true })
-      .click();
-    await expect
-      .poll(() =>
-        page.evaluate(
-          async (id) =>
-            (
-              await window.openAware!.invoke({ type: "state.get" })
-            ).sources.find((s) => s.id === id)?.lastFrameAt ?? 0,
-          secondId,
-        ),
-      )
-      .toBeGreaterThan(0);
-    const firstId = await page.evaluate(
-      async () =>
-        (await window.openAware!.invoke({ type: "state.get" })).sources[0]!.id,
+    const secondId = await addFixture(
+      page,
+      "demo",
+      "Secondary synthetic monitor",
     );
-    await page.evaluate(async (id) => {
-      await window.openAware!.invoke({
-        type: "source.update",
-        sourceId: id,
-        patch: { analysisEnabled: false },
-      });
-    }, firstId);
-    await page
-      .getByRole("combobox", { name: "Focused desktop source" })
-      .selectOption(firstId);
+    await generatedCamera(page);
+    const cameraId = await addFixture(
+      page,
+      "camera",
+      "Camera fixture (synthetic)",
+    );
+    const virtualId = await addFixture(
+      page,
+      "virtual_camera",
+      "Virtual camera (synthetic)",
+    );
+    const ids = [firstId, secondId, cameraId, virtualId];
+    const first = tile(page, firstId);
+    const second = tile(page, secondId);
+    const camera = tile(page, cameraId);
+    const virtual = tile(page, virtualId);
+    const firstPane = pane(page, firstId);
+    const secondPane = pane(page, secondId);
+    const cameraPane = pane(page, cameraId);
+    const virtualPane = pane(page, virtualId);
+    const assistantPane = dashboard.locator(
+      ':scope > [data-pane-id="assistant"]',
+    );
     await expect(page.getByTestId("source-tile")).toHaveCount(4);
-    const initialCameraBoard = page.getByTestId("camera-feed-dock-board");
-    await expect
-      .poll(async () => {
-        const first = await initialCameraBoard
-          .locator(`:scope > [data-pane-id="${cameraId}"]`)
-          .boundingBox();
-        const second = await initialCameraBoard
-          .locator(`:scope > [data-pane-id="${virtualCameraId}"]`)
-          .boundingBox();
-        return (
-          !!first &&
-          !!second &&
-          Math.abs(first.y - second.y) < 2 &&
-          second.x > first.x
-        );
-      })
-      .toBe(true);
-    const firstDesktop = page.locator(
-      `[data-testid="source-tile"][data-source-id="${firstId}"]`,
+    await expect(page.locator(".dock-board")).toHaveCount(1);
+    await expect(
+      dashboard.locator(":scope > .dock-pane.source-pane"),
+    ).toHaveCount(4);
+    await expect(dashboard.locator(":scope > .dock-pane")).toHaveCount(7);
+    await expect(
+      page.locator(
+        ".feed-layout, .feed-height-resizer, .session-strip, .dock-layout-tools",
+      ),
+    ).toHaveCount(0);
+    await expect(dashboard.locator(".dock-board, .source-title")).toHaveCount(
+      0,
     );
-    await expect(secondary).toHaveAttribute("data-source-id", secondId);
-    await expect(secondary).toHaveAttribute("data-presentation", "secondary");
-    const lowerPreview = secondary.locator(".source-preview canvas");
-    // Sample a row through the generated moving rectangle. This proves the
-    // lower rendered canvas changes, rather than only checking live metadata.
+    for (const name of [
+      "Primary synthetic monitor",
+      "Secondary synthetic monitor",
+      "Camera fixture (synthetic)",
+      "Virtual camera (synthetic)",
+    ])
+      await expect(
+        page.getByRole("heading", { name, exact: true }),
+      ).toHaveCount(1);
+    await expect
+      .poll(() => pairPosition(firstPane, secondPane, "right"))
+      .toBe(true);
+    await expect
+      .poll(() => pairPosition(cameraPane, virtualPane, "right"))
+      .toBe(true);
+    expect((await cameraPane.boundingBox())!.y).toBeGreaterThan(
+      (await firstPane.boundingBox())!.y,
+    );
+    await expect(camera.locator("video")).toBeVisible();
+    await expect(virtual.locator("video")).toBeVisible();
     const previewSignature = () =>
-      lowerPreview.evaluate((node) => {
+      second.locator("canvas").evaluate((node) => {
         const canvas = node as HTMLCanvasElement;
         const pixels = canvas
           .getContext("2d")!
@@ -259,86 +420,50 @@ test("desktop and main panes dock and resize while every synthetic feed stays li
           2166136261,
         );
       });
-    const previousPixels = await previewSignature();
-    await expect.poll(previewSignature).not.toBe(previousPixels);
-    await expect(
-      page.locator(".chat-welcome, .question-chip, .compose-note"),
-    ).toHaveCount(0);
-    await expect(firstDesktop.locator(".source-settings")).toHaveCount(0);
-    const firstName = (await firstDesktop.getByRole("heading").textContent())!;
-    const settings = firstDesktop.getByRole("button", {
-      name: `Settings for ${firstName}`,
+    const pixels = await previewSignature();
+    await expect.poll(previewSignature).not.toBe(pixels);
+
+    const settings = first.getByRole("button", {
+      name: "Settings for Primary synthetic monitor",
+      exact: true,
     });
     await settings.click();
     await expect(
-      firstDesktop.getByRole("checkbox", { name: "AI analysis" }),
+      first.getByRole("checkbox", { name: "AI analysis" }),
     ).not.toBeChecked();
-    const motionToggle = firstDesktop.getByRole("checkbox", {
-      name: "Motion alerts",
-    });
-    await motionToggle.click();
-    await expect(motionToggle).toBeChecked();
-    await expect
-      .poll(() =>
-        page.evaluate(
-          async (id) =>
-            (
-              await window.openAware!.invoke({ type: "state.get" })
-            ).sources.find((source) => source.id === id)!.motionEnabled,
-          firstId,
-        ),
-      )
-      .toBe(true);
-    await motionToggle.click();
-    await expect(motionToggle).not.toBeChecked();
-    await motionToggle.press("Escape");
-    await expect(firstDesktop.locator(".source-settings")).toHaveCount(0);
+    const motion = first.getByRole("checkbox", { name: "Motion alerts" });
+    // Source switches are controlled by the service snapshot returned over IPC.
+    // Wait for that update instead of check()'s immediate DOM-state assertion.
+    await motion.click();
+    await expect(motion).toBeChecked();
+    await motion.click();
+    await expect(motion).not.toBeChecked();
+    await motion.press("Escape");
+    await expect(first.locator(".source-settings")).toHaveCount(0);
     await expect(settings).toBeFocused();
-    await page.getByRole("button", { name: "Choose question sources" }).click();
-    const scopeMenu = page.getByRole("group", { name: "Question sources" });
-    await expect(scopeMenu.getByRole("checkbox")).toHaveCount(4);
-    await scopeMenu
-      .getByRole("checkbox", {
-        name: "Secondary synthetic monitor",
-        exact: true,
-      })
-      .uncheck();
-    await expect(
-      page.getByRole("button", { name: "Choose question sources" }),
-    ).toContainText("Sources (3)");
-    await scopeMenu
-      .getByRole("checkbox", {
-        name: "Secondary synthetic monitor",
-        exact: true,
-      })
-      .check();
-    await page.getByRole("button", { name: "Choose question sources" }).click();
-    for (const name of [
-      "Live workspace",
-      "Workspace assistant",
-      "Computer actions",
-      "Recent activity",
-    ])
-      await expect(
-        page.getByRole("heading", { name, exact: true }),
-      ).toBeVisible();
+    const scopeButton = page.getByRole("button", {
+      name: "Choose question sources",
+    });
+    await scopeButton.click();
+    const scope = page.getByRole("group", { name: "Question sources" });
+    await expect(scope.getByRole("checkbox")).toHaveCount(4);
+    const scopedSecond = scope.getByRole("checkbox", {
+      name: "Secondary synthetic monitor",
+      exact: true,
+    });
+    await scopedSecond.uncheck();
+    await expect(scopeButton).toContainText("Sources (3)");
+    await scopedSecond.check();
+    await scopedSecond.press("Escape");
+    await expect(scope).toHaveCount(0);
+    await expect(scopeButton).toBeFocused();
+
+    // Only generated fixtures appear in these user-facing screenshots.
     for (const [width, height, file] of [
       [1440, 960, "prototype-desktop-multisource.png"],
       [1024, 720, "prototype-desktop-compact.png"],
     ] as const) {
-      await app.evaluate(
-        ({ BrowserWindow }, size) =>
-          BrowserWindow.getAllWindows()[0]!.setContentSize(
-            size.width,
-            size.height,
-          ),
-        { width, height },
-      );
-      await expect
-        .poll(() =>
-          page.evaluate(() => ({ width: innerWidth, height: innerHeight })),
-        )
-        .toEqual({ width, height });
+      await viewport(app, page, width, height);
       await expect
         .poll(() =>
           page.evaluate(
@@ -347,366 +472,219 @@ test("desktop and main panes dock and resize while every synthetic feed stays li
         )
         .toBe(true);
       await expect
-        .poll(() =>
-          page.evaluate(() => {
-            const stop = document
-              .querySelector('[data-testid="stop-all"]')!
-              .getBoundingClientRect();
-            const textarea = document.querySelector(
-              ".conversation-panel textarea",
-            )!;
-            const composer = textarea.getBoundingClientRect();
-            const pane = textarea
-              .closest(".dock-pane-content")!
-              .getBoundingClientRect();
-            const hit = document.elementFromPoint(
-              composer.x + composer.width / 2,
-              composer.y + composer.height / 2,
-            );
-            return {
-              stop:
-                stop.x >= 0 &&
-                stop.right <= innerWidth &&
-                stop.y >= 0 &&
-                stop.bottom <= innerHeight,
-              composer:
-                composer.x >= 0 &&
-                composer.right <= innerWidth &&
-                composer.y >= 0 &&
-                composer.bottom <= innerHeight &&
-                composer.x >= pane.x &&
-                composer.right <= pane.right &&
-                composer.y >= pane.y &&
-                composer.bottom <= pane.bottom &&
-                (hit === textarea || (!!hit && textarea.contains(hit))),
-            };
-          }),
+        .poll(
+          () =>
+            dashboard.evaluate((board) => {
+              const scroller = board.closest(".dock-viewport")!;
+              const bounds = scroller.getBoundingClientRect();
+              const rect = board.getBoundingClientRect();
+              return {
+                noHorizontalScroll:
+                  scroller.scrollWidth <= scroller.clientWidth + 1,
+                insideScroller:
+                  rect.left >= bounds.left - 0.5 &&
+                  rect.right <= bounds.right + 0.5 &&
+                  rect.top >= bounds.top - 0.5 &&
+                  rect.bottom <= bounds.bottom + 0.5,
+                insideViewport:
+                  rect.left >= 0 &&
+                  rect.right <= innerWidth + 0.5 &&
+                  rect.top >= 0 &&
+                  rect.bottom <= innerHeight + 0.5,
+              };
+            }),
+          {
+            message:
+              "The default board must fit its viewport without horizontal scrolling",
+          },
         )
-        .toEqual({ stop: true, composer: true });
-      expect(
-        (await page
-          .getByTestId("dashboard-dock-board")
-          .locator(':scope > [data-pane-id="actions"]')
-          .boundingBox())!.height,
-      ).toBeLessThanOrEqual(100);
-      expect(
-        await page
-          .getByRole("button", { name: "Open Operator", exact: true })
-          .evaluate((button) => {
-            const box = button.getBoundingClientRect();
-            const pane = button
-              .closest(".dock-pane-content")!
-              .getBoundingClientRect();
-            const hit = document.elementFromPoint(
-              box.x + box.width / 2,
-              box.y + box.height / 2,
-            );
-            return (
-              box.top >= pane.top &&
-              box.bottom <= pane.bottom &&
-              box.left >= pane.left &&
-              box.right <= pane.right &&
-              (hit === button || (!!hit && button.contains(hit)))
-            );
-          }),
-      ).toBe(true);
+        .toEqual({
+          noHorizontalScroll: true,
+          insideScroller: true,
+          insideViewport: true,
+        });
+      await fullyContained(
+        assistantPane.getByRole("button", {
+          name: "Send question",
+          exact: true,
+        }),
+        ".dock-pane-content",
+        "Assistant Send",
+      );
+      await fullyContained(
+        assistantPane.getByRole("textbox", {
+          name: "Ask about your workspace",
+          exact: true,
+        }),
+        ".dock-pane-content",
+        "Assistant textarea",
+      );
+      await fullyContained(
+        assistantPane.locator(".session-model"),
+        ".dock-pane-handle",
+        "Assistant model picker",
+      );
+      await fullyContained(
+        assistantPane.getByRole("combobox", {
+          name: "Arrange Workspace assistant",
+          exact: true,
+        }),
+        ".dock-pane-handle",
+        "Assistant Arrange",
+      );
+      await expect
+        .poll(() => pairPosition(firstPane, secondPane, "right"))
+        .toBe(true);
+      for (const source of [first, second, camera, virtual]) {
+        const preview = (await source
+          .locator(".source-preview")
+          .boundingBox())!;
+        expect(preview.width).toBeGreaterThanOrEqual(258);
+        expect(preview.height).toBeGreaterThanOrEqual(180);
+        await reachable(
+          source.getByRole("button", { name: "Disconnect", exact: true }),
+        );
+        await reachable(source.getByRole("button", { name: /^Remove / }));
+      }
+      await reachable(page.getByTestId("stop-all"));
+      await reachable(
+        page.getByRole("button", { name: "Start watching", exact: true }),
+      );
+      await reachable(
+        page.getByRole("button", {
+          name: "Reset dashboard layout",
+          exact: true,
+        }),
+      );
+      await reachable(page.locator(".conversation-panel textarea"));
+      await reachable(
+        page.getByRole("button", { name: "Open Operator", exact: true }),
+      );
       await page.evaluate(() => {
-        for (const pane of document.querySelectorAll(".dock-pane-content"))
-          pane.scrollTo(0, 0);
-        for (const selector of [".feeds-section", ".chat-body"])
-          document.querySelector(selector)?.scrollTo(0, 0);
-      });
-      const upper = await firstDesktop.locator(".source-preview").boundingBox();
-      const lower = await secondary.locator(".source-preview").boundingBox();
-      expect(upper).not.toBeNull();
-      expect(lower).not.toBeNull();
-      expect(lower!.width).toBeGreaterThanOrEqual(370);
-      expect(lower!.width).toBeCloseTo(upper!.width, 0);
-      expect(lower!.height).toBeGreaterThanOrEqual(180);
-      expect(lower!.y).toBeGreaterThanOrEqual(upper!.y + upper!.height);
-      await lowerPreview.scrollIntoViewIfNeeded();
-      await secondary
-        .getByRole("button", { name: "Disconnect", exact: true })
-        .scrollIntoViewIfNeeded();
-      await page.evaluate(() => {
-        for (const pane of document.querySelectorAll(".dock-pane-content"))
-          pane.scrollTo(0, 0);
-        document.querySelector(".feeds-section")?.scrollTo(0, 0);
+        for (const node of document.querySelectorAll(
+          ".dock-pane-content, .dashboard-dock-layout, .dock-viewport, .dock-board, main",
+        ))
+          node.scrollTo(0, 0);
       });
       await page.screenshot({ path: resolve("assets", file), fullPage: false });
-      // Full desktop previews use the upper workspace. The independently live
-      // camera section must still be reachable through its existing scroller.
-      for (const tile of [camera, virtualCamera]) {
-        await tile.locator("video").scrollIntoViewIfNeeded();
-        await expect
-          .poll(() =>
-            tile.locator("video").evaluate((video) => {
-              const frame = video.getBoundingClientRect();
-              const pane = document
-                .querySelector('[data-pane-id="cameras"] > .dock-pane-content')!
-                .getBoundingClientRect();
-              const top = Math.max(frame.top, pane.top, 0);
-              const bottom = Math.min(frame.bottom, pane.bottom, innerHeight);
-              const left = Math.max(frame.left, pane.left, 0);
-              const right = Math.min(frame.right, pane.right, innerWidth);
-              return (
-                bottom - top >= 100 &&
-                right - left >= 100 &&
-                document.elementFromPoint(
-                  (left + right) / 2,
-                  (top + bottom) / 2,
-                ) === video
-              );
-            }),
-          )
-          .toBe(true);
-        await tile.locator(".source-bottom").scrollIntoViewIfNeeded();
-        await expect
-          .poll(() =>
-            tile.evaluate((node) => {
-              const pane = document
-                .querySelector('[data-pane-id="cameras"] > .dock-pane-content')!
-                .getBoundingClientRect();
-              return Array.from(
-                node.querySelectorAll(".source-bottom button"),
-              ).every((button) => {
-                const box = button.getBoundingClientRect();
-                const hit = document.elementFromPoint(
-                  box.x + box.width / 2,
-                  box.y + box.height / 2,
-                );
-                return (
-                  box.top >= pane.top &&
-                  box.bottom <= pane.bottom &&
-                  box.left >= pane.left &&
-                  box.right <= pane.right &&
-                  (hit === button || (!!hit && button.contains(hit)))
-                );
-              });
-            }),
-          )
-          .toBe(true);
-      }
     }
-    await app.evaluate(({ BrowserWindow }) =>
-      BrowserWindow.getAllWindows()[0]!.setContentSize(1440, 960),
-    );
+    await viewport(app, page, 1440, 960);
+
+    // Navigation can remount preview DOM, while capture IDs and delivery remain live.
+    const beforeNavigation = await frames(page);
+    await page
+      .getByRole("button", { name: "Connections", exact: true })
+      .click();
+    await expect(dashboard).toHaveCount(0);
+    await page.getByRole("button", { name: "Overview", exact: true }).click();
+    await expect(page.locator(".dock-board")).toHaveCount(1);
+    await framesAdvance(page, beforeNavigation);
     await expect
-      .poll(() =>
-        page.evaluate(() => ({ width: innerWidth, height: innerHeight })),
-      )
-      .toEqual({ width: 1440, height: 960 });
-    await expect
-      .poll(() =>
-        page.getByTestId("dashboard-dock-board").evaluate((board) => {
-          const bounds = board.getBoundingClientRect();
-          const panes = Array.from(
-            board.querySelectorAll(":scope > .dock-pane"),
-          ).map((pane) => pane.getBoundingClientRect());
-          return (
-            Math.abs(
-              Math.max(...panes.map((pane) => pane.right)) - bounds.right,
-            ) < 2 &&
-            Math.abs(
-              Math.max(...panes.map((pane) => pane.bottom)) - bounds.bottom,
-            ) < 2
-          );
-        }),
-      )
+      .poll(() => pairPosition(firstPane, secondPane, "right"))
       .toBe(true);
-    const ids = [firstId, secondId, cameraId, virtualCameraId];
-    const sourceIdentity = () =>
-      page.evaluate(async (sourceIds) => {
-        const state = await window.openAware!.invoke({ type: "state.get" });
-        return sourceIds.map((id) => {
-          const source = state.sources.find((item) => item.id === id)!;
-          return {
-            id: source.id,
-            deviceId: source.deviceId,
-            revision: source.revision,
-            status: source.status,
-          };
-        });
-      }, ids);
-    const identitiesBeforeDocking = await sourceIdentity();
-    const held = await page.evaluateHandle((sourceIds) => {
-      const tile = (id: string) =>
+    const identities = (await frames(page)).map(
+      ({ lastFrameAt: _time, ...identity }) => identity,
+    );
+    const beforeDocking = await frames(page);
+    const held = await page.evaluateHandle((ids) => {
+      const source = (id: string) =>
         document.querySelector(
           `[data-testid="source-tile"][data-source-id="${id}"]`,
         )!;
-      const first = tile(sourceIds[0]!).querySelector("canvas")!;
-      const second = tile(sourceIds[1]!).querySelector("canvas")!;
-      const camera = tile(sourceIds[2]!).querySelector("video")!;
-      const virtual = tile(sourceIds[3]!).querySelector("video")!;
-      const cameraStream = camera.srcObject as MediaStream;
-      const virtualStream = virtual.srcObject as MediaStream;
-      return { first, second, camera, virtual, cameraStream, virtualStream };
+      const first = source(ids[0]!).querySelector("canvas")!;
+      const second = source(ids[1]!).querySelector("canvas")!;
+      const camera = source(ids[2]!).querySelector("video")!;
+      const virtual = source(ids[3]!).querySelector("video")!;
+      return {
+        first,
+        second,
+        camera,
+        virtual,
+        cameraStream: camera.srcObject as MediaStream,
+        virtualStream: virtual.srcObject as MediaStream,
+      };
     }, ids);
-    const assertMountedCapture = async () => {
+    const assertContinuity = async () => {
       expect(
         await held.evaluate((refs) => ({
-          canvases: refs.first.isConnected && refs.second.isConnected,
-          videos: refs.camera.isConnected && refs.virtual.isConnected,
+          mounted: [refs.first, refs.second, refs.camera, refs.virtual].every(
+            (node) => node.isConnected,
+          ),
           sameStreams:
             refs.camera.srcObject === refs.cameraStream &&
             refs.virtual.srcObject === refs.virtualStream,
-          tracksLive: [
+          liveTracks: [
             ...refs.cameraStream.getTracks(),
             ...refs.virtualStream.getTracks(),
           ].every((track) => track.readyState === "live"),
         })),
-      ).toEqual({
-        canvases: true,
-        videos: true,
-        sameStreams: true,
-        tracksLive: true,
-      });
-      expect(await sourceIdentity()).toEqual(identitiesBeforeDocking);
+      ).toEqual({ mounted: true, sameStreams: true, liveTracks: true });
+      expect(
+        (await frames(page)).map(
+          ({ lastFrameAt: _time, ...identity }) => identity,
+        ),
+      ).toEqual(identities);
     };
-    const assistantDivider = page
-      .getByTestId("dashboard-dock-board")
-      .locator('[data-divider-id="main-assistant"]');
-    await assistantDivider.focus();
-    await assistantDivider.press("Home");
-    await expect
-      .poll(
-        async () =>
-          (await page
-            .getByTestId("dashboard-dock-board")
-            .locator(':scope > [data-pane-id="assistant"]')
-            .boundingBox())!.height,
-      )
-      .toBeLessThanOrEqual(241);
-    const sourcesButton = page.getByRole("button", {
-      name: "Choose question sources",
-    });
-    await sourcesButton.click();
-    const boundedSources = page.getByRole("group", {
-      name: "Question sources",
-    });
-    for (const input of await boundedSources.getByRole("checkbox").all()) {
-      await input.scrollIntoViewIfNeeded();
+    const reset = async () => {
+      await page
+        .getByRole("button", { name: "Reset dashboard layout", exact: true })
+        .click();
       await expect
-        .poll(() =>
-          input.evaluate((node) => {
-            const box = node.getBoundingClientRect();
-            const menu = node
-              .closest(".question-sources-menu")!
-              .getBoundingClientRect();
-            const pane = node
-              .closest(".dock-pane-content")!
-              .getBoundingClientRect();
-            return (
-              box.top >= menu.top &&
-              box.bottom <= menu.bottom &&
-              box.top >= pane.top &&
-              box.bottom <= pane.bottom &&
-              document.elementFromPoint(
-                box.x + box.width / 2,
-                box.y + box.height / 2,
-              ) === node
-            );
-          }),
-        )
+        .poll(() => pairPosition(firstPane, secondPane, "right"))
         .toBe(true);
-      await input.uncheck();
-      await expect(input).not.toBeChecked();
-      await input.check();
-      await expect(input).toBeChecked();
-    }
-    await boundedSources.getByRole("checkbox").last().press("Escape");
-    await expect(boundedSources).toHaveCount(0);
-    await expect(sourcesButton).toBeFocused();
-    await assertMountedCapture();
-    await page.getByRole("button", { name: "Reset dashboard layout" }).click();
-    const feedBoard = page.getByTestId("feed-dock-board");
-    const firstFeedPane = feedBoard.locator(
-      `:scope > [data-pane-id="${firstId}"]`,
-    );
-    const secondFeedPane = feedBoard.locator(
-      `:scope > [data-pane-id="${secondId}"]`,
-    );
-    await page
-      .getByRole("button", { name: "Place desktop feeds side by side" })
-      .click();
-    await expect(
-      page.getByRole("separator", { name: "Resize desktop feeds height" }),
-    ).toHaveAttribute("aria-valuenow", "340");
-    await expect
-      .poll(async () => {
-        const a = await firstFeedPane.boundingBox();
-        const b = await secondFeedPane.boundingBox();
-        return !!a && !!b && Math.abs(a.y - b.y) < 2 && b.x > a.x;
-      })
-      .toBe(true);
-    await assertMountedCapture();
-    let firstBounds = (await firstFeedPane.boundingBox())!;
+      await assertContinuity();
+    };
+
+    // Pointer drag and keyboard separators manipulate source peers on one board.
+    let firstBounds = (await firstPane.boundingBox())!;
     await page
       .getByRole("button", {
         name: "Move Secondary synthetic monitor",
         exact: true,
       })
-      .dragTo(firstFeedPane, {
+      .dragTo(firstPane, {
         targetPosition: { x: 5, y: Math.floor(firstBounds.height / 2) },
       });
     await expect
-      .poll(async () => {
-        const a = await firstFeedPane.boundingBox();
-        const b = await secondFeedPane.boundingBox();
-        return !!a && !!b && b.x < a.x && Math.abs(a.y - b.y) < 2;
-      })
+      .poll(() => pairPosition(firstPane, secondPane, "left"))
       .toBe(true);
-    await assertMountedCapture();
-    const feedDivider = feedBoard.getByRole("separator", {
-      name: "Resize feed horizontal split",
-    });
-    const firstWidth = (await firstFeedPane.boundingBox())!.width;
-    await feedDivider.focus();
-    await feedDivider.press("ArrowRight");
+    await assertContinuity();
+    const sourceDivider = await dividerBetween(
+      page,
+      firstPane,
+      secondPane,
+      "horizontal",
+    );
+    const sourceWidth = (await firstPane.boundingBox())!.width;
+    await sourceDivider.focus();
+    await sourceDivider.press("ArrowRight");
     await expect
-      .poll(async () => (await firstFeedPane.boundingBox())!.width)
-      .toBeLessThan(firstWidth);
-    firstBounds = (await firstFeedPane.boundingBox())!;
+      .poll(async () => (await firstPane.boundingBox())!.width)
+      .toBeLessThan(sourceWidth);
+    await assertContinuity();
     await page
-      .getByRole("button", {
-        name: "Move Secondary synthetic monitor",
+      .getByRole("combobox", {
+        name: "Arrange Secondary synthetic monitor",
         exact: true,
       })
-      .dragTo(firstFeedPane, {
-        targetPosition: {
-          x: Math.floor(firstBounds.width / 2),
-          y: firstBounds.height - 5,
-        },
-      });
+      .selectOption(`${firstId}/bottom`);
     await expect
-      .poll(async () => {
-        const a = await firstFeedPane.boundingBox();
-        const b = await secondFeedPane.boundingBox();
-        return !!a && !!b && b.y > a.y && Math.abs(a.x - b.x) < 2;
-      })
+      .poll(() => pairPosition(firstPane, secondPane, "bottom"))
       .toBe(true);
-    await assertMountedCapture();
-    await page.getByRole("button", { name: "Reset feed layout" }).click();
-    const heightControl = page.getByRole("separator", {
-      name: "Resize desktop feeds height",
-    });
-    const originalHeight = Number(
-      await heightControl.getAttribute("aria-valuenow"),
+    const verticalSourceDivider = await dividerBetween(
+      page,
+      firstPane,
+      secondPane,
+      "vertical",
     );
-    await heightControl.focus();
-    await heightControl.press("ArrowDown");
-    await expect(heightControl).toHaveAttribute(
-      "aria-valuenow",
-      String(originalHeight + 20),
-    );
-
-    const cameraBoard = page.getByTestId("camera-feed-dock-board");
-    const cameraPane = cameraBoard.locator(
-      `:scope > [data-pane-id="${cameraId}"]`,
-    );
-    const virtualPane = cameraBoard.locator(
-      `:scope > [data-pane-id="${virtualCameraId}"]`,
-    );
+    const sourceHeight = (await firstPane.boundingBox())!.height;
+    await verticalSourceDivider.focus();
+    await verticalSourceDivider.press("ArrowUp");
+    await expect
+      .poll(async () => (await firstPane.boundingBox())!.height)
+      .toBeLessThan(sourceHeight);
+    await assertContinuity();
+    await reset();
     await page
       .getByRole("combobox", {
         name: "Arrange Virtual camera (synthetic)",
@@ -714,18 +692,9 @@ test("desktop and main panes dock and resize while every synthetic feed stays li
       })
       .selectOption(`${cameraId}/left`);
     await expect
-      .poll(async () => {
-        const cameraRect = await cameraPane.boundingBox();
-        const virtualRect = await virtualPane.boundingBox();
-        return (
-          !!cameraRect &&
-          !!virtualRect &&
-          virtualRect.x < cameraRect.x &&
-          Math.abs(virtualRect.y - cameraRect.y) < 2
-        );
-      })
+      .poll(() => pairPosition(cameraPane, virtualPane, "left"))
       .toBe(true);
-    await assertMountedCapture();
+    await assertContinuity();
     await page
       .getByRole("combobox", {
         name: "Arrange Virtual camera (synthetic)",
@@ -733,62 +702,55 @@ test("desktop and main panes dock and resize while every synthetic feed stays li
       })
       .selectOption(`${cameraId}/bottom`);
     await expect
-      .poll(async () => {
-        const cameraRect = await cameraPane.boundingBox();
-        const virtualRect = await virtualPane.boundingBox();
-        return (
-          !!cameraRect &&
-          !!virtualRect &&
-          virtualRect.y > cameraRect.y &&
-          Math.abs(virtualRect.x - cameraRect.x) < 2
-        );
-      })
+      .poll(() => pairPosition(cameraPane, virtualPane, "bottom"))
       .toBe(true);
-    await assertMountedCapture();
+    await assertContinuity();
+    await reset();
 
-    const dashboard = page.getByTestId("dashboard-dock-board");
-    const workspacePane = dashboard.locator(
-      ':scope > [data-pane-id="workspace"]',
-    );
-    const assistantPane = dashboard.locator(
-      ':scope > [data-pane-id="assistant"]',
-    );
+    // The assistant moves like any other pane and retains its unsent draft.
     const composer = page.locator(".conversation-panel textarea");
-    await composer.fill("Keep this unsent draft while I arrange the panes.");
-    const workspaceBounds = (await workspacePane.boundingBox())!;
+    const draft = "Keep this unsent draft while I arrange the panes.";
+    await composer.fill(draft);
+    firstBounds = (await firstPane.boundingBox())!;
     await page
       .getByRole("button", { name: "Move Workspace assistant", exact: true })
-      .dragTo(workspacePane, {
-        targetPosition: { x: 5, y: Math.floor(workspaceBounds.height / 2) },
+      .dragTo(firstPane, {
+        targetPosition: { x: 5, y: Math.floor(firstBounds.height / 2) },
       });
     await expect
-      .poll(async () => {
-        const a = await assistantPane.boundingBox();
-        const w = await workspacePane.boundingBox();
-        return !!a && !!w && a.x < w.x && Math.abs(a.y - w.y) < 2;
-      })
+      .poll(() => pairPosition(firstPane, assistantPane, "left"))
       .toBe(true);
-    await expect(composer).toHaveValue(
-      "Keep this unsent draft while I arrange the panes.",
+    await expect(composer).toHaveValue(draft);
+    await assertContinuity();
+    await reset();
+    await page
+      .getByRole("combobox", {
+        name: "Arrange Workspace assistant",
+        exact: true,
+      })
+      .selectOption(`${firstId}/top`);
+    await expect
+      .poll(() => pairPosition(firstPane, assistantPane, "top"))
+      .toBe(true);
+    await expect(composer).toHaveValue(draft);
+    await assertContinuity();
+    await reset();
+    const mainDividerId = await dashboard
+      .locator(".dock-divider.horizontal")
+      .evaluateAll((nodes) =>
+        [...nodes]
+          .sort(
+            (a, b) =>
+              b.getBoundingClientRect().height -
+              a.getBoundingClientRect().height,
+          )[0]!
+          .getAttribute("data-divider-id"),
+      );
+    const mainDivider = dashboard.locator(
+      `[data-divider-id="${mainDividerId}"]`,
     );
-    await assertMountedCapture();
-    await page.getByRole("button", { name: "Reset dashboard layout" }).click();
-    await expect(
-      page.getByRole("button", { name: "Place camera feeds side by side" }),
-    ).toHaveAttribute("aria-pressed", "true");
-    await expect(
-      page.getByRole("separator", { name: "Resize camera feeds height" }),
-    ).toHaveAttribute("aria-valuenow", "340");
-    await expect(
-      page.getByRole("button", { name: "Stack desktop feeds" }),
-    ).toHaveAttribute("aria-pressed", "true");
-    await expect(heightControl).toHaveAttribute(
-      "aria-valuenow",
-      String(originalHeight),
-    );
-    const mainDivider = dashboard.locator('[data-divider-id="main-columns"]');
     const dividerBounds = (await mainDivider.boundingBox())!;
-    const workspaceWidth = (await workspacePane.boundingBox())!.width;
+    const widthBeforePointer = (await firstPane.boundingBox())!.width;
     await page.mouse.move(
       dividerBounds.x + dividerBounds.width / 2,
       dividerBounds.y + dividerBounds.height / 2,
@@ -800,275 +762,221 @@ test("desktop and main panes dock and resize while every synthetic feed stays li
     );
     await page.mouse.up();
     await expect
-      .poll(async () => (await workspacePane.boundingBox())!.width)
-      .toBeLessThan(workspaceWidth - 30);
-    await assertMountedCapture();
-    await page
-      .getByRole("button", { name: "Place desktop feeds side by side" })
-      .click();
+      .poll(async () => (await firstPane.boundingBox())!.width)
+      .toBeLessThan(widthBeforePointer - 10);
+    await assertContinuity();
     await mainDivider.focus();
     await mainDivider.press("Home");
-    await expect
-      .poll(async () => (await workspacePane.boundingBox())!.width)
-      .toBeLessThanOrEqual(321);
-    await expect
-      .poll(() =>
-        page.evaluate(() => {
-          const scroller = document.querySelector(".feeds-section")!;
-          return scroller.scrollWidth > scroller.clientWidth;
-        }),
-      )
-      .toBe(true);
-    for (const tile of [firstDesktop, secondary, camera, virtualCamera]) {
-      for (const button of [
-        tile.getByRole("button", { name: "Disconnect", exact: true }),
-        tile.getByRole("button", { name: /^Remove / }),
-      ]) {
-        await button.scrollIntoViewIfNeeded();
-        const bounds = (await button.boundingBox())!;
-        const tileBounds = (await tile.boundingBox())!;
-        expect(bounds.x).toBeGreaterThanOrEqual(tileBounds.x);
-        expect(bounds.x + bounds.width).toBeLessThanOrEqual(
-          tileBounds.x + tileBounds.width + 1,
-        );
-        expect(
-          await button.evaluate((node) => {
-            const rect = node.getBoundingClientRect();
-            const hit = document.elementFromPoint(
-              rect.x + rect.width / 2,
-              rect.y + rect.height / 2,
-            );
-            return hit === node || (!!hit && node.contains(hit));
-          }),
-        ).toBe(true);
-      }
-    }
-    await assertMountedCapture();
-    await page.getByRole("button", { name: "Reset dashboard layout" }).click();
-    await expect(composer).toHaveValue(
-      "Keep this unsent draft while I arrange the panes.",
+    await expect(mainDivider).toHaveAttribute(
+      "aria-valuenow",
+      (await mainDivider.getAttribute("aria-valuemin"))!,
     );
-    await page
-      .getByRole("combobox", {
-        name: "Arrange Workspace assistant",
-        exact: true,
-      })
-      .selectOption("workspace/top");
-    await expect
-      .poll(async () => {
-        const assistantRect = await assistantPane.boundingBox();
-        const workspaceRect = await workspacePane.boundingBox();
-        return (
-          !!assistantRect &&
-          !!workspaceRect &&
-          assistantRect.y < workspaceRect.y &&
-          Math.abs(assistantRect.x - workspaceRect.x) < 2
-        );
-      })
-      .toBe(true);
-    await assertMountedCapture();
-    await page.getByRole("button", { name: "Reset dashboard layout" }).click();
-    // Narrow/zoomed layouts stack the main panes in the actual docking order;
-    // they must not silently keep the original JSX order after a move.
-    await app.evaluate(({ BrowserWindow }) => {
-      const window = BrowserWindow.getAllWindows()[0]!;
-      window.setMinimumSize(600, 500);
-      window.setContentSize(820, 720);
-    });
-    await expect.poll(() => page.evaluate(() => innerWidth)).toBe(820);
-    await page
-      .getByRole("combobox", {
-        name: "Arrange Workspace assistant",
-        exact: true,
-      })
-      .selectOption("workspace/top");
-    await expect
-      .poll(async () => {
-        const assistantRect = await assistantPane.boundingBox();
-        const workspaceRect = await workspacePane.boundingBox();
-        return (
-          !!assistantRect &&
-          !!workspaceRect &&
-          assistantRect.y < workspaceRect.y
-        );
-      })
-      .toBe(true);
-    await assertMountedCapture();
-    await expect(
-      page.getByText("Stacked layout", {
-        exact: true,
-      }),
-    ).toBeVisible();
-    await page.getByRole("button", { name: "Reset dashboard layout" }).click();
-    await app.evaluate(({ BrowserWindow }) => {
-      const window = BrowserWindow.getAllWindows()[0]!;
-      window.setContentSize(1440, 960);
-      window.setMinimumSize(1040, 720);
-    });
-    await expect.poll(() => page.evaluate(() => innerWidth)).toBe(1440);
-    const afterPixels = await previewSignature();
-    await expect.poll(previewSignature).not.toBe(afterPixels);
-    await held.dispose();
-    await page.evaluate(() =>
-      document.querySelector(".feeds-section")?.scrollTo(0, 0),
-    );
-    await secondary
-      .getByRole("button", { name: "Focus Secondary synthetic monitor" })
-      .click();
-    await expect(secondary).toHaveAttribute("data-presentation", "primary");
-    await expect(firstDesktop).toHaveAttribute(
-      "data-presentation",
-      "secondary",
-    );
-    await expect
-      .poll(() =>
-        page.evaluate(
-          async (ids) => {
-            const state = await window.openAware!.invoke({ type: "state.get" });
-            return ids.every((id) =>
-              state.sources.some(
-                (source) => source.id === id && source.status === "live",
-              ),
-            );
-          },
-          [firstId, secondId],
-        ),
-      )
-      .toBe(true);
-    await page.getByTestId("stop-all").click();
-    await expect
-      .poll(() =>
-        page.evaluate(async () =>
-          (await window.openAware!.invoke({ type: "state.get" })).sources.every(
-            (s) => s.status === "stopped",
-          ),
-        ),
-      )
-      .toBe(true);
-    await expect(camera.locator("video")).toHaveCount(0);
-    await expect(virtualCamera.locator("video")).toHaveCount(0);
-  } finally {
-    await app.close();
-  }
-});
+    await assertContinuity();
+    await reset();
 
-test("four desktop columns retain reachable source controls through inner horizontal scrolling", async () => {
-  const env: Record<string, string> = Object.fromEntries(
-    Object.entries(process.env).flatMap(([key, value]) =>
-      value === undefined ? [] : [[key, value]],
-    ),
-  );
-  env.OPENAWARE_TEST = "1";
-  delete env.ELECTRON_RUN_AS_NODE;
-  const app = await electron.launch({
-    executablePath: process.env.OPENAWARE_EXECUTABLE,
-    args: [
-      ...(process.env.OPENAWARE_EXECUTABLE ? [] : ["."]),
-      "--disable-backgrounding-occluded-windows",
-      "--disable-renderer-backgrounding",
-      "--disable-background-timer-throttling",
-    ],
-    cwd: resolve("."),
-    env,
-  });
-  try {
-    const page = await app.firstWindow();
-    await app.evaluate(({ BrowserWindow }) => {
-      const window = BrowserWindow.getAllWindows()[0]!;
-      window.webContents.setBackgroundThrottling(false);
-      window.showInactive();
-      window.setContentSize(1024, 720);
-    });
-    const ids = await page.evaluate(async () => {
-      const ids: string[] = [];
-      for (let index = 0; index < 4; index++) {
-        const id = crypto.randomUUID();
-        await window.openAware!.invoke({
-          type: "source.add",
-          source: {
-            id,
-            name: `Synthetic display ${index + 1}`,
-            kind: "demo",
-            deviceId: `synthetic-column-${index}`,
-          },
-        });
-        await window.openAware!.invoke({
-          type: "source.update",
-          sourceId: id,
-          patch: { analysisEnabled: false },
-        });
-        ids.push(id);
-      }
-      return ids;
-    });
-    await expect(page.getByTestId("source-tile")).toHaveCount(4);
-    for (const id of ids) {
-      const tile = page.locator(
-        `[data-testid="source-tile"][data-source-id="${id}"]`,
-      );
-      await tile.getByRole("button", { name: "Connect", exact: true }).click();
-      await expect(tile.locator("canvas")).toHaveCount(1);
-    }
+    // Compact mode keeps docking order and scrolls one board, with usable controls.
+    await viewport(app, page, 820, 720);
     await page
-      .getByRole("button", { name: "Place desktop feeds side by side" })
-      .click();
+      .getByRole("combobox", {
+        name: "Arrange Workspace assistant",
+        exact: true,
+      })
+      .selectOption(`${firstId}/top`);
     await expect
-      .poll(() =>
-        page.evaluate(() => {
-          const scroller = document.querySelector(".feeds-section")!;
-          const board = document.querySelector(
-            '[data-testid="feed-dock-board"]',
-          )!;
-          return (
-            scroller.scrollWidth > scroller.clientWidth &&
-            board.getBoundingClientRect().width >= 1064
-          );
-        }),
+      .poll(
+        async () =>
+          (await assistantPane.boundingBox())!.y <
+          (await firstPane.boundingBox())!.y,
       )
       .toBe(true);
-    for (const id of ids) {
-      const tile = page.locator(
-        `[data-testid="source-tile"][data-source-id="${id}"]`,
+    for (const source of [first, second, camera, virtual]) {
+      expect(
+        (await source.locator(".source-preview").boundingBox())!.height,
+      ).toBeGreaterThanOrEqual(180);
+      await reachable(
+        source.getByRole("button", { name: "Disconnect", exact: true }),
       );
-      const preview = (await tile.locator(".source-preview").boundingBox())!;
-      expect(preview.width).toBeGreaterThanOrEqual(258);
-      expect(preview.height).toBeGreaterThanOrEqual(180);
-      for (const button of [
-        tile.getByRole("button", { name: "Disconnect", exact: true }),
-        tile.getByRole("button", { name: /^Remove / }),
-      ]) {
-        await button.scrollIntoViewIfNeeded();
-        const control = (await button.boundingBox())!;
-        const bounds = (await tile.boundingBox())!;
-        expect(control.x).toBeGreaterThanOrEqual(bounds.x);
-        expect(control.x + control.width).toBeLessThanOrEqual(
-          bounds.x + bounds.width + 1,
-        );
-        expect(
-          await button.evaluate((node) => {
-            const rect = node.getBoundingClientRect();
-            const hit = document.elementFromPoint(
-              rect.x + rect.width / 2,
-              rect.y + rect.height / 2,
-            );
-            return hit === node || (!!hit && node.contains(hit));
-          }),
-        ).toBe(true);
-      }
+      await reachable(source.getByRole("button", { name: /^Remove / }));
     }
+    await reachable(composer);
+    await reachable(page.getByTestId("stop-all"));
+    await expect(page.locator(".dock-board")).toHaveCount(1);
     expect(
       await page.evaluate(
         () => document.documentElement.scrollWidth <= innerWidth,
       ),
     ).toBe(true);
+    await assertContinuity();
+    await viewport(app, page, 1440, 960);
+    await reset();
+    await framesAdvance(page, beforeDocking);
+    const afterPixels = await previewSignature();
+    await expect.poll(previewSignature).not.toBe(afterPixels);
+    await pane(page, secondId)
+      .getByRole("button", {
+        name: "Focus Secondary synthetic monitor",
+        exact: true,
+      })
+      .click();
+    await expect(second).toHaveAttribute("data-presentation", "primary");
+    await expect(first).toHaveAttribute("data-presentation", "secondary");
+    await expect(secondPane).toBeFocused();
+    await assertContinuity();
+    await held.dispose();
+    await page.getByTestId("stop-all").click();
+    await expect
+      .poll(() =>
+        page.evaluate(async () =>
+          (await window.openAware!.invoke({ type: "state.get" })).sources.every(
+            (source) => source.status === "stopped",
+          ),
+        ),
+      )
+      .toBe(true);
+    await expect(
+      page.locator(
+        '[data-testid="source-tile"] video, [data-testid="source-tile"] canvas',
+      ),
+    ).toHaveCount(0);
+  } finally {
+    await app.close();
+  }
+});
+
+test("four generated displays start in readable 2x2 panes and can scroll as one custom row", async () => {
+  const { app, page } = await launchVisual();
+  try {
+    await viewport(app, page, 1024, 720);
+    const ids: string[] = [];
+    for (let i = 0; i < 4; i++)
+      ids.push(await addFixture(page, "demo", `Synthetic display ${i + 1}`));
+    const dashboard = page.getByTestId("dashboard-dock-board");
+    await expect(page.locator(".dock-board")).toHaveCount(1);
+    await expect(dashboard.locator(":scope > .source-pane")).toHaveCount(4);
+    await expect(dashboard.locator(".dock-board")).toHaveCount(0);
+    await expect(
+      page.locator(
+        ".camera-empty, [data-pane-id='cameras'], .feed-layout, .source-title",
+      ),
+    ).toHaveCount(0);
+    await expect
+      .poll(() =>
+        pairPosition(pane(page, ids[0]!), pane(page, ids[1]!), "right"),
+      )
+      .toBe(true);
+    await expect
+      .poll(() =>
+        pairPosition(pane(page, ids[2]!), pane(page, ids[3]!), "right"),
+      )
+      .toBe(true);
+    expect((await pane(page, ids[2]!).boundingBox())!.y).toBeGreaterThan(
+      (await pane(page, ids[0]!).boundingBox())!.y,
+    );
+    const before = await frames(page);
+    for (const id of ids) {
+      const source = tile(page, id);
+      const preview = (await source.locator(".source-preview").boundingBox())!;
+      expect(preview.width).toBeGreaterThanOrEqual(258);
+      expect(preview.height).toBeGreaterThanOrEqual(180);
+      await reachable(
+        source.getByRole("button", { name: "Disconnect", exact: true }),
+      );
+      await reachable(source.getByRole("button", { name: /^Remove / }));
+    }
+    const held = await page.evaluateHandle(
+      (ids) =>
+        ids.map((id) =>
+          document.querySelector(
+            `[data-testid="source-tile"][data-source-id="${id}"] canvas`,
+          )!,
+        ),
+      ids,
+    );
+    for (let index = 1; index < ids.length; index++) {
+      await page
+        .getByRole("combobox", {
+          name: `Arrange Synthetic display ${index + 1}`,
+          exact: true,
+        })
+        .selectOption(`${ids[index - 1]}/right`);
+    }
+    for (let index = 1; index < ids.length; index++) {
+      await expect
+        .poll(() =>
+          pairPosition(
+            pane(page, ids[index - 1]!),
+            pane(page, ids[index]!),
+            "right",
+          ),
+        )
+        .toBe(true);
+    }
+    const scroller = page.locator(".dashboard-dock-layout > .dock-viewport");
+    await expect(scroller).toHaveCount(1);
+    await expect
+      .poll(() =>
+        scroller.evaluate((node) => node.scrollWidth > node.clientWidth),
+      )
+      .toBe(true);
+    for (const id of ids) {
+      const source = tile(page, id);
+      expect(
+        (await source.locator(".source-preview").boundingBox())!.width,
+      ).toBeGreaterThanOrEqual(258);
+      await reachable(
+        source.getByRole("button", { name: "Disconnect", exact: true }),
+      );
+      await reachable(source.getByRole("button", { name: /^Remove / }));
+    }
+    const focusPicker = page.getByRole("combobox", {
+      name: "Focused desktop source",
+      exact: true,
+    });
+    // Select a different primary each time so this exercises the actual change
+    // handler. Focus must reveal offscreen peers without rearranging the row.
+    await focusPicker.selectOption(ids[3]!);
+    await expect(pane(page, ids[3]!)).toBeFocused();
+    await fullyContained(
+      pane(page, ids[3]!),
+      ".dock-viewport",
+      "Focused last display",
+    );
+    const lastScroll = await scroller.evaluate((node) => node.scrollLeft);
+    await focusPicker.selectOption(ids[0]!);
+    await expect(pane(page, ids[0]!)).toBeFocused();
+    await fullyContained(
+      pane(page, ids[0]!),
+      ".dock-viewport",
+      "Focused first display",
+    );
+    const firstScroll = await scroller.evaluate((node) => node.scrollLeft);
+    expect(firstScroll).toBeLessThan(lastScroll);
+    await focusPicker.selectOption(ids[3]!);
+    await expect(pane(page, ids[3]!)).toBeFocused();
+    await expect(tile(page, ids[3]!)).toHaveAttribute(
+      "data-presentation",
+      "primary",
+    );
+    await fullyContained(
+      pane(page, ids[3]!),
+      ".dock-viewport",
+      "Refocused last display",
+    );
+    await expect
+      .poll(() => scroller.evaluate((node) => node.scrollLeft))
+      .toBeGreaterThan(firstScroll);
+    expect(
+      await held.evaluate((nodes) => nodes.every((node) => node.isConnected)),
+    ).toBe(true);
+    await held.dispose();
+    await expect(page.locator(".dock-board")).toHaveCount(1);
     expect(
       await page.evaluate(
-        async () =>
-          (
-            await window.openAware!.invoke({ type: "state.get" })
-          ).sources.filter((source) => source.status === "live").length,
+        () => document.documentElement.scrollWidth <= innerWidth,
       ),
-    ).toBe(4);
+    ).toBe(true);
+    await framesAdvance(page, before);
+    await reachable(page.getByTestId("stop-all"));
     await page.getByTestId("stop-all").click();
     await expect(
       page.locator('[data-testid="source-tile"] canvas'),

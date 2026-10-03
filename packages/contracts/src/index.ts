@@ -287,7 +287,7 @@ export interface OpenAwareBridge {
   quit(): Promise<void>;
 }
 export const initialSnapshot = (): Snapshot => ({
-  version: "0.2.2",
+  version: "0.2.3",
   session: "idle",
   epoch: 1,
   sources: [],

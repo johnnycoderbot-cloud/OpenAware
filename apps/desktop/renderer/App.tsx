@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
   Aperture,
@@ -45,8 +45,8 @@ import {
   type SourceKind,
 } from "@openaware/contracts";
 import { CaptureManager, createProbe } from "./capture";
-import { DockLayout, DockPane, FeedLayout } from "./DockLayout";
-import { MAIN_DOCK_TREE } from "./dock-layout";
+import { DockLayout, DockPane } from "./DockLayout";
+import { buildWorkspaceLayout } from "./workspace-layout";
 
 declare global {
   interface Window {
@@ -80,7 +80,6 @@ export function App() {
   const [focusedSourceId, setFocusedSourceId] = useState<string>();
   const [layoutResetRevision, setLayoutResetRevision] = useState(0);
   const [desktopState, setDesktopState] = useState<DesktopState>();
-  const feedsRef = useRef<HTMLDivElement>(null);
   const [notice, setNotice] = useState<string>();
   const [pending, setPending] = useState<string[]>([]);
   const [, redraw] = useState(0);
@@ -175,7 +174,13 @@ export function App() {
   }
   function focusSource(sourceId: string) {
     setFocusedSourceId(sourceId);
-    feedsRef.current?.scrollTo({ top: 0, behavior: "auto" });
+    requestAnimationFrame(() => {
+      const pane = Array.from(
+        document.querySelectorAll<HTMLElement>('[data-testid="source-tile"]'),
+      ).find((node) => node.dataset.sourceId === sourceId);
+      pane?.scrollIntoView({ block: "nearest", inline: "nearest" });
+      pane?.focus({ preventScroll: true });
+    });
   }
   async function addSource(name: string, kind: SourceKind, deviceId: string) {
     const id = crypto.randomUUID();
@@ -220,17 +225,20 @@ export function App() {
     await run({ type: "source.remove", sourceId: source.id });
   }
   const live = snapshot.sources.filter((source) => source.status === "live");
-  const recent = snapshot.observations[snapshot.observations.length - 1];
   const sessionActive = snapshot.session === "monitoring";
   const screenSources = snapshot.sources.filter(
     (source) => source.kind !== "camera" && source.kind !== "virtual_camera",
   );
-  const cameraSources = snapshot.sources.filter(
-    (source) => source.kind === "camera" || source.kind === "virtual_camera",
-  );
   const primarySource =
     screenSources.find((source) => source.id === focusedSourceId) ||
     screenSources[0];
+  const sourceMembership = snapshot.sources
+    .map((source) => `${source.id}/${source.kind}`)
+    .join("|");
+  const workspaceTree = useMemo(
+    () => buildWorkspaceLayout(snapshot.sources),
+    [sourceMembership],
+  );
   const canStart =
     live.some((s) => s.motionEnabled || s.analysisEnabled) &&
     (!live.some((s) => s.analysisEnabled) ||
@@ -249,6 +257,7 @@ export function App() {
     <SourceTile
       key={source.id}
       source={source}
+      embedded
       presentation={presentation}
       onFocus={
         presentation === "secondary" ? () => focusSource(source.id) : undefined
@@ -312,18 +321,84 @@ export function App() {
             </button>
           ))}
         </nav>
+        {tab === "Overview" && (
+          <div className="workspace-controls">
+            {screenSources.length > 0 && (
+              <select
+                className="workspace-source-select"
+                aria-label="Focused desktop source"
+                value={primarySource?.id || ""}
+                onChange={(e) => focusSource(e.target.value)}
+              >
+                {screenSources.map((source) => (
+                  <option key={source.id} value={source.id}>
+                    {source.name}
+                  </option>
+                ))}
+              </select>
+            )}
+            <button
+              data-testid="add-source"
+              className="icon-button"
+              aria-label="Add source"
+              title="Add screen or camera"
+              disabled={!bridge || snapshot.sources.length >= 4}
+              onClick={() => setAddOpen(true)}
+            >
+              <Plus size={17} />
+            </button>
+            <button
+              className="icon-button"
+              aria-label={
+                sessionActive
+                  ? "Pause AI"
+                  : snapshot.session === "paused"
+                    ? "Resume watching"
+                    : "Start watching"
+              }
+              title={sessionActive ? "Pause AI" : "Start AI watching"}
+              disabled={
+                !bridge ||
+                (!sessionActive && !canStart) ||
+                pending.includes("monitor.start")
+              }
+              onClick={() =>
+                void run({
+                  type: sessionActive ? "monitor.pause" : "monitor.start",
+                })
+              }
+            >
+              {sessionActive ? <Pause size={15} /> : <Play size={15} />}
+            </button>
+          </div>
+        )}
         <div className="topbar-right">
-          <span className={`status-pill ${sessionActive ? "good" : "warning"}`}>
+          <span
+            className={`status-pill ${sessionActive || live.length ? "good" : "warning"}`}
+            title={sessionActive ? "AI watching" : "AI is idle"}
+          >
             <span className="dot" />
             {sessionActive
               ? "Watching"
               : snapshot.session === "paused"
                 ? "AI paused"
-                : "Standby"}
+                : live.length
+                  ? `${live.length} live`
+                  : "Standby"}
           </span>
           <span className="memory-badge">
             <LockKeyhole size={14} /> Local · Memory only
           </span>
+          {tab === "Overview" && (
+            <button
+              className="icon-button"
+              aria-label="Reset dashboard layout"
+              title="Reset workspace layout"
+              onClick={() => setLayoutResetRevision((value) => value + 1)}
+            >
+              <RefreshCw size={15} />
+            </button>
+          )}
           <button
             className="button secondary background-button"
             disabled={
@@ -410,181 +485,113 @@ export function App() {
           )}
           {tab === "Overview" && (
             <>
-              <div className="session-strip" aria-label="Monitoring status">
-                <span>
-                  <Video size={15} />
-                  <strong>{live.length}</strong> live sources{" "}
-                  <span className="muted">/ 4 slots</span>
-                </span>
-                <button
-                  className="session-model"
-                  onClick={() => setTab("Connections")}
-                  title={
-                    snapshot.binding.modelId || "Connect a local vision model"
-                  }
-                >
-                  <Cpu size={15} />
-                  <span>{snapshot.binding.modelId || "Connect model"}</span>
-                  <span
-                    className={`connection-state ${snapshot.binding.status === "verified" ? "verified" : ""}`}
-                  >
-                    {snapshot.binding.status === "verified"
-                      ? "Verified"
-                      : "Not verified"}
-                  </span>
-                  <ChevronRight size={13} />
-                </button>
-                <span className="session-evidence">
-                  <Clock3 size={15} />
-                  AI evidence: {recent ? age(recent.capturedAt) : "not sampled"}
-                </span>
-              </div>
               <DockLayout
                 name="dashboard"
                 className="dashboard-dock-layout"
-                defaultTree={MAIN_DOCK_TREE}
-                onReset={() => setLayoutResetRevision((value) => value + 1)}
+                defaultTree={workspaceTree}
+                resetKey={`${layoutResetRevision}/${sourceMembership}`}
                 minimums={{
                   workspace: { width: 320, height: 200 },
-                  cameras: {
-                    width: 260,
-                    height: cameraSources.length ? 240 : 110,
-                  },
                   assistant: { width: 300, height: 240 },
                   actions: { width: 260, height: 88 },
                   activity: { width: 260, height: 100 },
+                  ...Object.fromEntries(
+                    snapshot.sources.map((source) => [
+                      source.id,
+                      { width: 260, height: 260 },
+                    ]),
+                  ),
                 }}
               >
-                <DockPane id="workspace" title="Live workspace">
-                  <div
-                    className={`feeds-section ${cameraSources.length ? "has-cameras" : ""}`}
-                    ref={feedsRef}
+                {snapshot.sources.length === 0 && (
+                  <DockPane
+                    id="workspace"
+                    title="Live workspace"
+                    icon={<Monitor size={17} />}
                   >
-                    <section
-                      className={`panel desktop-panel ${screenSources.length > 1 ? "has-multiple-desktops" : ""}`}
-                      aria-label="Live desktop sources"
-                    >
-                      <div className="feed-panel-heading">
-                        {screenSources.length > 0 && (
-                          <select
-                            aria-label="Focused desktop source"
-                            value={primarySource?.id || ""}
-                            onChange={(e) => focusSource(e.target.value)}
+                    <div className="desktop-empty">
+                      <Monitor size={28} />
+                      <span>Add a screen or camera</span>
+                    </div>
+                  </DockPane>
+                )}
+                {snapshot.sources.map((source) => {
+                  const camera =
+                    source.kind === "camera" ||
+                    source.kind === "virtual_camera";
+                  const presentation = camera
+                    ? "camera"
+                    : source.id === primarySource?.id
+                      ? "primary"
+                      : "secondary";
+                  return (
+                    <DockPane
+                      key={source.id}
+                      id={source.id}
+                      title={source.name}
+                      className="source-pane"
+                      testId="source-tile"
+                      sourceId={source.id}
+                      presentation={presentation}
+                      icon={
+                        camera ? <Camera size={17} /> : <Monitor size={17} />
+                      }
+                      actions={
+                        <>
+                          <span
+                            className={`source-status ${source.status === "live" ? "good" : ""}`}
                           >
-                            {screenSources.map((source) => (
-                              <option key={source.id} value={source.id}>
-                                {source.name}
-                              </option>
-                            ))}
-                          </select>
-                        )}
-                        <div className="page-actions">
-                          <button
-                            data-testid="add-source"
-                            className="button secondary"
-                            disabled={!bridge || snapshot.sources.length >= 4}
-                            onClick={() => setAddOpen(true)}
-                          >
-                            <Plus size={16} />
-                            Add source
-                          </button>
-                          <button
-                            className="button primary"
-                            disabled={
-                              !bridge ||
-                              (!sessionActive && !canStart) ||
-                              pending.includes("monitor.start")
-                            }
-                            onClick={() =>
-                              void run({
-                                type: sessionActive
-                                  ? "monitor.pause"
-                                  : "monitor.start",
-                              })
-                            }
-                          >
-                            {sessionActive ? (
-                              <Pause size={15} />
-                            ) : (
-                              <Play size={15} />
-                            )}
-                            {sessionActive
-                              ? "Pause AI"
-                              : snapshot.session === "paused"
-                                ? "Resume watching"
-                                : "Start watching"}
-                          </button>
-                        </div>
-                      </div>
-                      {primarySource ? (
-                        <FeedLayout
-                          sources={screenSources}
-                          resetRevision={layoutResetRevision}
-                        >
-                          {screenSources.map((source) => (
-                            <DockPane
-                              key={source.id}
-                              id={source.id}
-                              title={source.name}
-                              hideTitle
+                            <span className="dot" />
+                            {source.status === "live"
+                              ? "LIVE"
+                              : source.status === "unavailable"
+                                ? "UNAVAILABLE"
+                                : "STOPPED"}
+                          </span>
+                          {!camera && source.id !== primarySource?.id && (
+                            <button
+                              className="icon-button focus-source"
+                              aria-label={`Focus ${source.name}`}
+                              title="Focus this feed"
+                              onClick={() => focusSource(source.id)}
                             >
-                              {renderSource(
-                                source,
-                                source.id === primarySource.id
-                                  ? "primary"
-                                  : "secondary",
-                              )}
-                            </DockPane>
-                          ))}
-                        </FeedLayout>
-                      ) : (
-                        <div className="desktop-empty">
-                          <Monitor size={28} />
-                          <span>No desktop sources</span>
-                        </div>
-                      )}
-                    </section>
-                  </div>
-                </DockPane>
-                <DockPane id="cameras" title="Camera feeds">
-                  <section
-                    className="panel camera-panel"
-                    aria-label="Camera feeds"
-                  >
-                    {cameraSources.length > 0 ? (
-                      <FeedLayout
-                        sources={cameraSources}
-                        category="camera"
-                        name="camera-feed"
-                        resetRevision={layoutResetRevision}
-                      >
-                        {cameraSources.map((source) => (
-                          <DockPane
-                            key={source.id}
-                            id={source.id}
-                            title={source.name}
-                            hideTitle
-                          >
-                            {renderSource(source, "camera")}
-                          </DockPane>
-                        ))}
-                      </FeedLayout>
-                    ) : (
-                      <div className="camera-empty">
-                        <Camera size={23} />
-                        <span>No cameras connected</span>
-                      </div>
-                    )}
-                  </section>
-                </DockPane>
-                <DockPane id="assistant" title="Workspace assistant">
+                              <ArrowUpRight size={15} />
+                            </button>
+                          )}
+                        </>
+                      }
+                    >
+                      {renderSource(source, presentation)}
+                    </DockPane>
+                  );
+                })}
+                <DockPane
+                  id="assistant"
+                  title="Workspace assistant"
+                  icon={<Bot size={17} />}
+                  actions={
+                    <button
+                      className="session-model"
+                      onClick={() => setTab("Connections")}
+                      title={`${snapshot.binding.modelId || "Connect a local vision model"} · ${snapshot.binding.status === "verified" ? "Verified" : "Not verified"}`}
+                    >
+                      <Cpu size={13} />
+                      <span>{snapshot.binding.modelId || "Connect model"}</span>
+                      <ChevronRight size={12} />
+                    </button>
+                  }
+                >
                   <Conversation
                     snapshot={snapshot}
                     run={run}
                     pending={pending}
                   />
                 </DockPane>
-                <DockPane id="actions" title="Computer actions">
+                <DockPane
+                  id="actions"
+                  title="Computer actions"
+                  icon={<Settings2 size={17} />}
+                >
                   <section
                     className="panel operator-summary"
                     aria-label="Computer actions"
@@ -605,19 +612,25 @@ export function App() {
                     </div>
                   </section>
                 </DockPane>
-                <DockPane id="activity" title="Recent activity">
+                <DockPane
+                  id="activity"
+                  title="Recent activity"
+                  icon={<Activity size={17} />}
+                  actions={
+                    <button
+                      className="icon-button"
+                      aria-label="View all"
+                      title="View event log"
+                      onClick={() => setTab("Event log")}
+                    >
+                      <ArrowUpRight size={15} />
+                    </button>
+                  }
+                >
                   <section
                     className="panel overview-activity"
                     aria-label="Recent activity"
                   >
-                    <div className="summary-heading">
-                      <button
-                        className="text-button"
-                        onClick={() => setTab("Event log")}
-                      >
-                        View all <ArrowUpRight size={14} />
-                      </button>
-                    </div>
                     <div className="activity-list">
                       {snapshot.events.length === 0 ? (
                         <div className="empty-activity">
@@ -824,6 +837,7 @@ function Stat({
 
 function SourceTile({
   source,
+  embedded = false,
   presentation,
   onFocus,
   info,
@@ -836,6 +850,7 @@ function SourceTile({
   onToggle,
 }: {
   source: Source;
+  embedded?: boolean;
   presentation: "primary" | "secondary" | "camera";
   onFocus?: () => void;
   info: ReturnType<CaptureManager["info"]>;
@@ -912,37 +927,39 @@ function SourceTile({
   return (
     <article
       ref={articleRef}
-      data-testid="source-tile"
+      data-testid={embedded ? undefined : "source-tile"}
       data-source-id={source.id}
       data-presentation={presentation}
       className={`source-tile ${presentation} ${presentation !== "camera" ? "desktop-feed" : ""}`}
     >
-      <div className="source-title">
-        <div>
-          {icon}
-          <h3>{source.name}</h3>
-        </div>
-        <span
-          className={`source-status ${source.status === "live" ? "good" : ""}`}
-        >
-          <span className="dot" />
-          {source.status === "live"
-            ? "LIVE"
-            : source.status === "unavailable"
-              ? "UNAVAILABLE"
-              : "STOPPED"}
-        </span>
-        {onFocus && (
-          <button
-            className="icon-button focus-source"
-            onClick={onFocus}
-            aria-label={`Focus ${source.name}`}
-            title="Focus this feed"
+      {!embedded && (
+        <div className="source-title">
+          <div>
+            {icon}
+            <h3>{source.name}</h3>
+          </div>
+          <span
+            className={`source-status ${source.status === "live" ? "good" : ""}`}
           >
-            <ArrowUpRight size={17} />
-          </button>
-        )}
-      </div>
+            <span className="dot" />
+            {source.status === "live"
+              ? "LIVE"
+              : source.status === "unavailable"
+                ? "UNAVAILABLE"
+                : "STOPPED"}
+          </span>
+          {onFocus && (
+            <button
+              className="icon-button focus-source"
+              onClick={onFocus}
+              aria-label={`Focus ${source.name}`}
+              title="Focus this feed"
+            >
+              <ArrowUpRight size={17} />
+            </button>
+          )}
+        </div>
+      )}
       <div className="source-preview">
         {info?.stream ? (
           <video
