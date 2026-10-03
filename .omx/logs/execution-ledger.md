@@ -37,3 +37,5 @@ The subsequent integration authorization and clarification that no VSS server ex
 The owner's direct llama.cpp follow-up is tracked in the [0.3.1 implementation ledger](implementation-v0.3.1.md). This reuses the same local workflows through a third explicit provider; no runtime or model download is included, and real llama.cpp inference remains unverified.
 
 The owner's request to find bugs and try to break the app is tracked in the [0.3.2 adversarial audit](adversarial-audit-v0.3.2.md). Its reproduced defects, repairs, independent reviews, final checks and explicit remaining coverage are recorded separately from earlier release evidence.
+
+The owner's labeled source-button and lower agent-desk request is tracked in the [workspace agent desk ledger](workspace-agent-desk.md), including truthful empty/connected seats, source assignments and the final connection scope.

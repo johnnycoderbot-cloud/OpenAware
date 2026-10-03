@@ -1,0 +1,224 @@
+.agent-desk {
+  position: relative;
+  isolation: isolate;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 170px;
+  color: var(--text, #edf2f8);
+  overflow: hidden;
+  container-type: inline-size;
+  background: radial-gradient(ellipse at 50% 87%, #16263a70, transparent 68%);
+}
+.agent-desk-worktop {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+.agent-desk-seats {
+  position: relative;
+  display: grid;
+  height: 100%;
+  min-height: inherit;
+  padding: 0 6%;
+}
+.agent-desk-seat {
+  position: relative;
+  min-width: 0;
+  min-height: inherit;
+}
+.agent-desk-seat-info {
+  position: absolute;
+  z-index: 2;
+  top: 17%;
+  left: 10%;
+  right: 10%;
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+.agent-desk-seat-heading {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  min-height: 24px;
+}
+.agent-desk-role,
+.agent-desk-model,
+.agent-desk-assignments {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-desk-role {
+  font-size: 11px;
+  font-weight: 650;
+  color: #d5e5f4;
+}
+.agent-desk-model {
+  font-size: 13px;
+  line-height: 17px;
+  font-weight: 600;
+}
+.agent-desk-assignments {
+  font-size: 11px;
+  line-height: 15px;
+  color: #9cb5cc;
+}
+.agent-desk-state {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  color: #9ab0c7;
+  white-space: nowrap;
+}
+.agent-desk-state i,
+.agent-desk-needs > span {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: currentColor;
+  flex-shrink: 0;
+}
+.agent-desk-seat[data-state="ready"] .agent-desk-state,
+.agent-desk-seat[data-state="watching"] .agent-desk-state {
+  color: #73d6b2;
+}
+.agent-desk-seat[data-state="paused"] .agent-desk-state {
+  color: #d8bd7a;
+}
+.agent-desk-seat[data-state="error"] .agent-desk-state,
+.agent-desk-seat[data-state="failed"] .agent-desk-state {
+  color: #eca2a2;
+}
+.agent-desk-configure {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  flex-shrink: 0;
+  width: auto;
+  max-width: 140px;
+  height: 28px;
+  margin-left: auto;
+  padding: 0 7px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: #0c1a2a66;
+  color: #afc5db;
+  font-size: 10px;
+  white-space: nowrap;
+}
+.agent-desk-configure > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.agent-desk-configure:hover {
+  background: #284760;
+  border-color: #4b6a87;
+}
+.agent-desk-chair {
+  position: absolute;
+  bottom: 5px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(190px, 100%);
+  height: min(160px, 72%);
+  overflow: visible;
+  pointer-events: none;
+}
+.agent-desk-outline {
+  opacity: 0.63;
+  filter: drop-shadow(0 0 2px #6bd7ffc9) drop-shadow(0 0 7px #2fa8d85c);
+}
+.agent-desk-seat[data-state="paused"] .agent-desk-occupant {
+  opacity: 0.75;
+}
+.agent-desk-seat[data-state="error"] .agent-desk-occupant {
+  opacity: 0.65;
+}
+.agent-desk-needs {
+  position: absolute;
+  z-index: 3;
+  bottom: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 30px;
+  max-width: 100%;
+  padding: 5px 9px;
+  border: 1px solid #315b78;
+  border-radius: 5px;
+  background: #102235e8;
+  color: #9cdbf4;
+  font-size: 11px;
+  line-height: 17px;
+  white-space: nowrap;
+  box-shadow: 0 0 12px #34a9da12;
+}
+button.agent-desk-needs:hover {
+  background: #1a3a52;
+  border-color: #5da6c7;
+}
+.agent-desk button:focus-visible {
+  outline: 2px solid #78d8ff;
+  outline-offset: 2px;
+}
+@container (max-width: 430px) {
+  .agent-desk-seats {
+    padding-inline: 3%;
+  }
+  .agent-desk-seat-info {
+    left: 6%;
+    right: 6%;
+    top: 13%;
+  }
+  .agent-desk-seat-heading {
+    gap: 4px;
+  }
+  .agent-desk-role {
+    flex-shrink: 1;
+  }
+  .agent-desk-state {
+    font-size: 10px;
+  }
+  .agent-desk[data-seats="2"] .agent-desk-configure {
+    position: absolute;
+    top: 66px;
+    right: 0;
+    width: 28px;
+    padding: 0;
+  }
+  .agent-desk[data-seats="2"] .agent-desk-configure > span {
+    display: none;
+  }
+  .agent-desk-model {
+    font-size: 11px;
+  }
+  .agent-desk-assignments {
+    font-size: 10px;
+  }
+  .agent-desk-chair {
+    height: min(140px, 65%);
+  }
+  .agent-desk-needs {
+    font-size: 10px;
+    padding-inline: 7px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .agent-desk button {
+    transition: none;
+  }
+}

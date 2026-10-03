@@ -16,6 +16,7 @@ import {
   CheckCircle2,
   ChevronRight,
   Clock3,
+  Columns2,
   Cpu,
   Eye,
   Layers3,
@@ -41,6 +42,7 @@ import {
 } from "lucide-react";
 import {
   initialSnapshot,
+  MAX_SOURCES,
   type CaptureChoice,
   type CaptionSearchResult,
   type Command,
@@ -56,9 +58,12 @@ import {
 } from "@openaware/contracts";
 import { CaptureManager, createProbe } from "./capture";
 import { DockLayout, DockPane } from "./DockLayout";
+import { AgentDesk } from "./AgentDesk";
+import { buildAgentDeskSeats } from "./agent-desk-state";
 import {
   buildWorkspaceLayout,
   fitWorkspaceLayout,
+  minimumWorkspaceHeight,
   sourceAspectRatio,
 } from "./workspace-layout";
 
@@ -108,6 +113,8 @@ export function App() {
   const [maskSource, setMaskSource] = useState<Source>();
   const [focusedSourceId, setFocusedSourceId] = useState<string>();
   const [layoutResetRevision, setLayoutResetRevision] = useState(0);
+  const [lowerPanel, setLowerPanel] = useState<"desk" | "memory">("desk");
+  const [splitDesk, setSplitDesk] = useState(false);
   const [desktopState, setDesktopState] = useState<DesktopState>();
   const [notice, setNotice] = useState<string>();
   const [pending, setPending] = useState<string[]>([]);
@@ -284,6 +291,23 @@ export function App() {
     live.some((s) => s.motionEnabled || s.analysisEnabled) &&
     (!live.some((s) => s.analysisEnabled) ||
       snapshot.binding.status === "verified");
+  const sourceHeaderId = screenSources[0]?.id || snapshot.sources[0]?.id;
+  const addSourceControl = (
+    <button
+      data-testid="add-source"
+      className="button secondary source-add-button"
+      title={
+        snapshot.sources.length >= MAX_SOURCES
+          ? "Four-source limit reached"
+          : "Add a monitor, window or camera"
+      }
+      disabled={!bridge || snapshot.sources.length >= MAX_SOURCES}
+      onClick={() => setAddOpen(true)}
+    >
+      <Plus size={14} />
+      <span>Add source</span>
+    </button>
+  );
   const subtitle: Record<Tab, string> = {
     Overview: "Your workspace, in view.",
     Operator: "A goal. A plan. You stay in control.",
@@ -378,16 +402,6 @@ export function App() {
                 ))}
               </select>
             )}
-            <button
-              data-testid="add-source"
-              className="icon-button"
-              aria-label="Add source"
-              title="Add screen or camera"
-              disabled={!bridge || snapshot.sources.length >= 4}
-              onClick={() => setAddOpen(true)}
-            >
-              <Plus size={17} />
-            </button>
             <button
               className="icon-button"
               aria-label={
@@ -533,12 +547,15 @@ export function App() {
                 fitDefaultTree={(tree, size, minimums) =>
                   fitWorkspaceLayout(tree, snapshot.sources, size, minimums)
                 }
+                minimumDefaultHeight={(tree, size, minimums) =>
+                  minimumWorkspaceHeight(tree, snapshot.sources, size, minimums)
+                }
                 resetKey={`${layoutResetRevision}/${sourceMembership}`}
                 minimums={{
                   workspace: { width: 320, height: 200 },
                   assistant: { width: 300, height: 240 },
                   activity: { width: 260, height: 100 },
-                  extra: { width: 260, height: 100 },
+                  extra: { width: 260, height: 210 },
                   ...Object.fromEntries(
                     snapshot.sources.map((source) => [
                       source.id,
@@ -552,11 +569,16 @@ export function App() {
                     id="workspace"
                     title="Live workspace"
                     icon={<Monitor size={17} />}
+                    actions={addSourceControl}
                   >
-                    <div className="desktop-empty">
+                    <button
+                      className="desktop-empty source-empty-trigger"
+                      disabled={!bridge}
+                      onClick={() => setAddOpen(true)}
+                    >
                       <Monitor size={28} />
                       <span>Add a screen or camera</span>
-                    </div>
+                    </button>
                   </DockPane>
                 )}
                 {snapshot.sources.map((source) => {
@@ -573,7 +595,7 @@ export function App() {
                       key={source.id}
                       id={source.id}
                       title={source.name}
-                      className="source-pane"
+                      className={`source-pane ${source.id === sourceHeaderId ? "has-add-source" : ""}`}
                       testId="source-tile"
                       sourceId={source.id}
                       presentation={presentation}
@@ -582,8 +604,10 @@ export function App() {
                       }
                       actions={
                         <>
+                          {source.id === sourceHeaderId && addSourceControl}
                           <span
                             className={`source-status ${source.status === "live" ? "good" : ""}`}
+                            title={`${source.name}: ${source.status}`}
                           >
                             <span className="dot" />
                             {source.status === "live"
@@ -611,15 +635,106 @@ export function App() {
                 })}
                 <DockPane
                   id="extra"
-                  title="Video memory"
-                  icon={<Clock3 size={17} />}
+                  title={lowerPanel === "desk" ? "Agent desk" : "Video memory"}
+                  icon={
+                    lowerPanel === "desk" ? (
+                      <Bot size={17} />
+                    ) : (
+                      <Clock3 size={17} />
+                    )
+                  }
+                  className="agent-desk-pane"
+                  actions={
+                    <>
+                      {lowerPanel === "desk" && (
+                        <button
+                          className="text-button"
+                          data-testid="split-agent-desk"
+                          aria-label={splitDesk ? "Single desk" : "Split desk"}
+                          aria-pressed={splitDesk}
+                          onClick={() => setSplitDesk((value) => !value)}
+                          title={
+                            splitDesk
+                              ? "Use one Observer seat"
+                              : "Show Observer and Operator seats sharing the selected model"
+                          }
+                        >
+                          <Columns2 size={13} />
+                          <span className="desk-action-full">
+                            {splitDesk ? "Single desk" : "Split desk"}
+                          </span>
+                          <span
+                            className="desk-action-short"
+                            aria-hidden="true"
+                          >
+                            {splitDesk ? "Single" : "Split"}
+                          </span>
+                        </button>
+                      )}
+                      <button
+                        className="text-button"
+                        data-testid="switch-lower-panel"
+                        aria-label={
+                          lowerPanel === "desk" ? "Video memory" : "Agent desk"
+                        }
+                        title={
+                          lowerPanel === "desk"
+                            ? "Show video memory"
+                            : "Show agent desk"
+                        }
+                        onClick={() =>
+                          setLowerPanel((value) =>
+                            value === "desk" ? "memory" : "desk",
+                          )
+                        }
+                      >
+                        {lowerPanel === "desk" ? (
+                          <Clock3 size={13} />
+                        ) : (
+                          <Bot size={13} />
+                        )}
+                        <span className="desk-action-full">
+                          {lowerPanel === "desk"
+                            ? "Video memory"
+                            : "Agent desk"}
+                        </span>
+                        <span className="desk-action-short" aria-hidden="true">
+                          {lowerPanel === "desk" ? "Memory" : "Desk"}
+                        </span>
+                      </button>
+                    </>
+                  }
                 >
-                  <VideoMemory
-                    snapshot={snapshot}
-                    run={run}
-                    pending={pending}
-                    report={report}
-                  />
+                  <div
+                    className="lower-pane-view desk-view"
+                    hidden={lowerPanel !== "desk"}
+                  >
+                    {splitDesk && (
+                      <span className="desk-shared-label">Shared model</span>
+                    )}
+                    <AgentDesk
+                      seats={buildAgentDeskSeats(snapshot, !!bridge, splitDesk)}
+                      onConfigure={(id) =>
+                        setTab(
+                          id === "operator" &&
+                            snapshot.binding.status === "verified"
+                            ? "Operator"
+                            : "Connections",
+                        )
+                      }
+                    />
+                  </div>
+                  <div
+                    className="lower-pane-view"
+                    hidden={lowerPanel !== "memory"}
+                  >
+                    <VideoMemory
+                      snapshot={snapshot}
+                      run={run}
+                      pending={pending}
+                      report={report}
+                    />
+                  </div>
                 </DockPane>
                 <DockPane
                   id="assistant"

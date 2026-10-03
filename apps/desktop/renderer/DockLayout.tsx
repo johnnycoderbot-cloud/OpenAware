@@ -51,6 +51,11 @@ type LayoutProps = {
     size: { width: number; height: number },
     minimums?: Record<string, PaneMinimum>,
   ) => DockNode;
+  minimumDefaultHeight?: (
+    tree: DockNode,
+    size: { width: number; height: number },
+    minimums?: Record<string, PaneMinimum>,
+  ) => number;
   className?: string;
 };
 
@@ -62,6 +67,7 @@ export function DockLayout({
   resetKey = 0,
   onDock,
   fitDefaultTree,
+  minimumDefaultHeight,
   className = "",
 }: LayoutProps) {
   const panes = Children.toArray(children) as ReactElement<DockPaneProps>[];
@@ -130,6 +136,13 @@ export function DockLayout({
     () => measureDock(visibleTree, { x: 0, y: 0, ...size }, minimums),
     [visibleTree, size, minimums],
   );
+  const preferredMinimumHeight = useMemo(
+    () =>
+      !customized && !compactMain && minimumDefaultHeight
+        ? minimumDefaultHeight(tree, size, minimums)
+        : 0,
+    [tree, size, minimums, customized, compactMain, minimumDefaultHeight],
+  );
   const clearDrag = () => {
     setDragging(undefined);
     setTarget(undefined);
@@ -162,7 +175,15 @@ export function DockLayout({
           style={
             compactMain
               ? undefined
-              : { minWidth: minimum.width, minHeight: minimum.height }
+              : {
+                  minWidth: minimum.width,
+                  minHeight: Math.max(
+                    minimum.height,
+                    Number.isFinite(preferredMinimumHeight)
+                      ? preferredMinimumHeight
+                      : 0,
+                  ),
+                }
           }
         >
           {panes.map(({ props }) => {

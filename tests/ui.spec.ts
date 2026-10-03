@@ -386,6 +386,7 @@ test("local connection, masked chat, caption memory and rule controls preserve e
     }, images[0].data_url);
     expect(maxPixel).toBeLessThanOrEqual(2);
 
+    await page.getByTestId("switch-lower-panel").click();
     const memory = page.getByRole("region", {
       name: "Video memory",
       exact: true,
@@ -958,6 +959,7 @@ test("llama.cpp verifies unknown vision support and keeps live questions separat
             .at(-1)?.sourceIds,
       ),
     ).toEqual([sourceIds.alpha]);
+    await page.getByTestId("switch-lower-panel").click();
     const memory = page.getByRole("region", {
       name: "Video memory",
       exact: true,

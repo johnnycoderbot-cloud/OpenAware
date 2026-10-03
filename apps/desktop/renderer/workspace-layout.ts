@@ -141,21 +141,12 @@ export function buildWorkspaceLayout(
   };
 }
 
-/** Fit only an untouched default; docking remains the caller's authority. */
-export function fitWorkspaceLayout(
+function preferredSourceHeights(
   tree: DockNode,
   sources: WorkspaceSource[],
   size: { width: number; height: number },
-  minimums: Record<string, PaneMinimum> = {},
-): DockNode {
-  if (
-    !Number.isFinite(size.width) ||
-    !Number.isFinite(size.height) ||
-    size.width <= 0 ||
-    size.height <= 0
-  )
-    return tree;
-
+  minimums: Record<string, PaneMinimum>,
+): (node: DockNode) => number | undefined {
   const bounds: DockRect = { x: 0, y: 0, ...size };
   const sourceMap = new Map(sources.map((source) => [source.id, source]));
   const measured = measureDock(tree, bounds, minimums);
@@ -181,6 +172,64 @@ export function fitWorkspaceLayout(
       ? Math.max(first, second)
       : first + second + DOCK_GAP;
   };
+  return preferredHeight;
+}
+
+/** Height needed by fitted source rows and tools at the existing board width. */
+export function minimumWorkspaceHeight(
+  tree: DockNode,
+  sources: WorkspaceSource[],
+  size: { width: number; height: number },
+  minimums: Record<string, PaneMinimum> = {},
+): number {
+  const minimum = minimumDock(tree, minimums);
+  if (!Number.isFinite(size.width) || size.width <= 0) return minimum.height;
+  const preferredHeight = preferredSourceHeights(
+    tree,
+    sources,
+    {
+      width: size.width,
+      height: Math.max(
+        minimum.height,
+        Number.isFinite(size.height) ? size.height : 0,
+      ),
+    },
+    minimums,
+  );
+  const height = (node: DockNode): number => {
+    const preferred = preferredHeight(node);
+    if (preferred !== undefined) return preferred;
+    if (node.kind === "pane") return minimumDock(node, minimums).height;
+    const first = height(node.first);
+    const second = height(node.second);
+    if (node.axis === "horizontal") return Math.max(first, second);
+    if (node.second.kind === "pane" && node.second.id === "extra")
+      return first + second + DOCK_GAP;
+    // Tool-only splits keep their existing ratios, including the 75/25 sidebar.
+    if (Number.isFinite(node.ratio) && node.ratio > 0 && node.ratio < 1)
+      return Math.max(first / node.ratio, second / (1 - node.ratio)) + DOCK_GAP;
+    return first + second + DOCK_GAP;
+  };
+  return Math.ceil(Math.max(minimum.height, height(tree)));
+}
+
+/** Fit only an untouched default; docking remains the caller's authority. */
+export function fitWorkspaceLayout(
+  tree: DockNode,
+  sources: WorkspaceSource[],
+  size: { width: number; height: number },
+  minimums: Record<string, PaneMinimum> = {},
+): DockNode {
+  if (
+    !Number.isFinite(size.width) ||
+    !Number.isFinite(size.height) ||
+    size.width <= 0 ||
+    size.height <= 0
+  )
+    return tree;
+
+  const bounds: DockRect = { x: 0, y: 0, ...size };
+  const preferredHeight = preferredSourceHeights(tree, sources, size, minimums);
 
   const fit = (node: DockNode, rect: DockRect): DockNode => {
     if (node.kind === "pane") return node;

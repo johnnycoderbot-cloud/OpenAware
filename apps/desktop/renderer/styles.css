@@ -3851,6 +3851,70 @@ h2 {
   }
 }
 
+.source-empty-trigger {
+  width: 100%;
+  border: 0;
+  color: #b6d8ee;
+  cursor: pointer;
+  font: inherit;
+}
+.source-empty-trigger:hover {
+  color: #e3f4ff;
+  background: #172c3b;
+}
+.source-empty-trigger:focus-visible {
+  outline: 2px solid #70b5ff;
+  outline-offset: -4px;
+}
+.source-pane.has-add-source {
+  container: source-header / inline-size;
+}
+.lower-pane-view {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+}
+.lower-pane-view[hidden] {
+  display: none;
+}
+.desk-view {
+  position: relative;
+  min-height: 170px;
+}
+.agent-desk-pane {
+  container: desk-header / inline-size;
+}
+.dashboard-dock-layout > .dock-viewport {
+  scrollbar-gutter: stable;
+}
+.desk-action-short {
+  display: none;
+}
+@container desk-header (max-width: 400px) {
+  .desk-action-full {
+    display: none;
+  }
+  .desk-action-short {
+    display: inline;
+  }
+}
+.desk-shared-label {
+  position: absolute;
+  z-index: 3;
+  top: 5px;
+  left: 50%;
+  transform: translateX(-50%);
+  color: #a3baca;
+  font-size: 10px;
+  pointer-events: none;
+}
+@container source-header (max-width: 350px) {
+  .source-pane.has-add-source .source-status {
+    font-size: 0;
+    gap: 0;
+  }
+}
+
 /* One frame per independently docked dashboard pane. */
 .dashboard-dock-layout > .dock-viewport > .dock-board > .dock-pane {
   grid-template-columns: minmax(0, 1fr);

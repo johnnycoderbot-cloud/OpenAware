@@ -323,7 +323,7 @@ async function fittedSource(source: Locator) {
 async function extraBelowSources(page: Page, ids: string[]) {
   const extra = pane(page, "extra");
   await expect(
-    page.getByRole("heading", { name: "Video memory", exact: true }),
+    page.getByRole("heading", { name: /^(Agent desk|Video memory)$/ }),
   ).toHaveCount(1);
   await expect
     .poll(async () => {
@@ -338,8 +338,43 @@ async function extraBelowSources(page: Page, ids: string[]) {
     .toBe(true);
 }
 
+async function deskControls(page: Page) {
+  const extra = pane(page, "extra");
+  if (
+    await extra
+      .getByRole("heading", { name: "Video memory", exact: true })
+      .count()
+  )
+    await extra.getByTestId("switch-lower-panel").click();
+  const split = extra.getByTestId("split-agent-desk");
+  if ((await split.getAttribute("aria-pressed")) === "false")
+    await split.click();
+  for (const control of [
+    split,
+    extra.getByTestId("switch-lower-panel"),
+    extra.getByRole("combobox", { name: "Arrange Agent desk", exact: true }),
+  ]) {
+    await reachable(control);
+    await fullyContained(control, ".dock-pane-handle", "Desk header control");
+  }
+  await expect(extra.getByTestId("agent-desk-outline")).toHaveCount(2);
+  await expect(extra.getByTestId("agent-desk-agent")).toHaveCount(0);
+  for (const control of await extra
+    .getByRole("button", { name: /^Needs agent:/ })
+    .all()) {
+    await reachable(control);
+    await fullyContained(control, ".dock-pane-content", "Empty seat action");
+  }
+}
+
 async function memoryControls(page: Page, sourceId: string) {
   const memoryPane = pane(page, "extra");
+  if (
+    await memoryPane
+      .getByRole("heading", { name: "Agent desk", exact: true })
+      .count()
+  )
+    await memoryPane.getByTestId("switch-lower-panel").click();
   const memory = memoryPane.getByRole("region", {
     name: "Video memory",
     exact: true,
@@ -422,6 +457,20 @@ async function memoryControls(page: Page, sourceId: string) {
   ).toBeVisible();
   await withinMemory(summarize, "Historical summary action");
   await expect(summarize).toBeDisabled();
+  // Switching the shared lower pane must hide all memory controls from the
+  // accessibility tree and retain the user's search and scope when returning.
+  await memoryPane.getByTestId("switch-lower-panel").click();
+  await expect(
+    page.getByRole("region", { name: "Video memory", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("searchbox", { name: "Search captions", exact: true }),
+  ).toHaveCount(0);
+  await expect(memoryPane.getByTestId("agent-desk")).toBeVisible();
+  await memoryPane.getByTestId("switch-lower-panel").click();
+  await expect(search).toHaveValue("generated fixture");
+  await expect(source).toHaveValue(sourceId);
+  await expect(time).toHaveValue("custom");
   // No caption/model inference is created by this visual fixture. Restore the
   // default scope and leave summarization as an explicit user action.
   await withinMemory(source, "Memory source scope reset");
@@ -517,6 +566,10 @@ test("one workspace docks direct live sources and sidebar panes without restarti
   try {
     const dashboard = page.getByTestId("dashboard-dock-board");
     await expect(dashboard).toHaveCount(1);
+    await deskControls(page);
+    await pane(page, "extra").screenshot({
+      path: resolve("assets/prototype-agent-desk.png"),
+    });
     await expect(
       page.locator(".camera-empty, [data-pane-id='cameras']"),
     ).toHaveCount(0);
@@ -734,6 +787,13 @@ test("one workspace docks direct live sources and sidebar panes without restarti
       await expect
         .poll(() => pairPosition(firstPane, secondPane, "right"))
         .toBe(true);
+      await reachable(page.getByTestId("add-source"));
+      await fullyContained(
+        page.getByTestId("add-source"),
+        ".dock-pane-handle",
+        "Labeled Add source",
+      );
+      await expect(page.getByTestId("add-source")).toBeDisabled();
       for (const source of [first, second, camera, virtual]) {
         const preview = (await source
           .locator(".source-preview")
@@ -761,6 +821,7 @@ test("one workspace docks direct live sources and sidebar panes without restarti
         page.getByRole("button", { name: "Operator", exact: true }),
       );
       await memoryControls(page, firstId);
+      await deskControls(page);
       await page.evaluate(() => {
         for (const node of document.querySelectorAll(
           ".dock-pane-content, .dashboard-dock-layout, .dock-viewport, .dock-board, main",
@@ -858,11 +919,29 @@ test("one workspace docks direct live sources and sidebar panes without restarti
     await assertContinuity();
     await reset();
     await page
-      .getByRole("combobox", { name: "Arrange Video memory", exact: true })
+      .getByRole("combobox", { name: /^Arrange (Agent desk|Video memory)$/ })
       .selectOption(`${firstId}/top`);
     await expect
       .poll(() => pairPosition(firstPane, extraPane, "top"))
       .toBe(true);
+    await assertContinuity();
+    await reset();
+
+    await page
+      .getByRole("combobox", { name: /^Arrange (Agent desk|Video memory)$/ })
+      .selectOption(`${firstId}/left`);
+    const deskDivider = await dividerBetween(
+      page,
+      extraPane,
+      firstPane,
+      "horizontal",
+    );
+    await deskDivider.focus();
+    await deskDivider.press("Home");
+    await expect
+      .poll(async () => Math.round((await extraPane.boundingBox())!.width))
+      .toBe(260);
+    await deskControls(page);
     await assertContinuity();
     await reset();
 
@@ -1055,6 +1134,7 @@ test("one workspace docks direct live sources and sidebar panes without restarti
     await reachable(composer);
     await reachable(page.getByTestId("stop-all"));
     await memoryControls(page, firstId);
+    await deskControls(page);
     await expect(page.locator(".dock-board")).toHaveCount(1);
     expect(
       await page.evaluate(
@@ -1124,7 +1204,7 @@ test("four generated displays start in readable 2x2 panes and can scroll as one 
     ).toHaveCount(0);
     await extraBelowSources(page, ids);
     // Additional monitors occupy the former empty lower area; only the unused
-    // remainder stays available as Video memory beneath the fitted source rows.
+    // remainder stays available as the desk beneath the fitted source rows.
     await expect
       .poll(async () => {
         const extra = (await pane(page, "extra").boundingBox())!;
@@ -1146,6 +1226,46 @@ test("four generated displays start in readable 2x2 panes and can scroll as one 
     expect((await pane(page, ids[2]!).boundingBox())!.y).toBeGreaterThan(
       (await pane(page, ids[0]!).boundingBox())!.y,
     );
+    // At the overflow boundary, a scrollbar must not change fitted widths and
+    // alternate the required board height across ResizeObserver deliveries.
+    const defaultScroller = page.locator(
+      ".dashboard-dock-layout > .dock-viewport",
+    );
+    expect(
+      await defaultScroller.evaluate(
+        (node) => getComputedStyle(node).scrollbarGutter,
+      ),
+    ).toBe("stable");
+    for (const offset of [-1, 0, 1]) {
+      const threshold = await defaultScroller.evaluate((node) => {
+        const board = node.querySelector<HTMLElement>(".dock-board")!;
+        return Math.ceil(
+          parseFloat(board.style.minHeight) + innerHeight - node.clientHeight,
+        );
+      });
+      await viewport(app, page, 1024, threshold + offset);
+      await expect
+        .poll(
+          () =>
+            defaultScroller.evaluate(async (node) => {
+              const board = node.querySelector<HTMLElement>(".dock-board")!;
+              const sizes = new Set<string>();
+              for (let frame = 0; frame < 20; frame++) {
+                await new Promise<void>((resolve) =>
+                  requestAnimationFrame(() => resolve()),
+                );
+                const rect = board.getBoundingClientRect();
+                sizes.add(
+                  `${rect.width}:${rect.height}:${node.scrollHeight}:${node.clientHeight}`,
+                );
+              }
+              return sizes.size;
+            }),
+          { message: "Fitted board must settle around scrollbar overflow" },
+        )
+        .toBe(1);
+    }
+    await viewport(app, page, 1024, 720);
     const before = await frames(page);
     for (const id of ids) {
       const source = tile(page, id);
@@ -1158,6 +1278,15 @@ test("four generated displays start in readable 2x2 panes and can scroll as one 
       );
       await reachable(source.getByRole("button", { name: /^Remove / }));
     }
+    // Custom rows clamp source panes at their minimum width. The labeled
+    // source entry and arrange/focus controls must still fit in that header.
+    await reachable(page.getByTestId("add-source"));
+    await fullyContained(
+      page.getByTestId("add-source"),
+      ".dock-pane-handle",
+      "Minimum-width Add source",
+    );
+    await expect(page.getByTestId("add-source")).toBeDisabled();
     const held = await page.evaluateHandle(
       (ids) =>
         ids.map((id) =>

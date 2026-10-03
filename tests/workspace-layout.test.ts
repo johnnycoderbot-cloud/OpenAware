@@ -12,6 +12,7 @@ import {
 import {
   buildWorkspaceLayout,
   fitWorkspaceLayout,
+  minimumWorkspaceHeight,
   sourceAspectRatio,
 } from "../apps/desktop/renderer/workspace-layout";
 
@@ -331,6 +332,157 @@ function fitMinimums(sources: { id: string }[]): Record<string, PaneMinimum> {
     ["activity", { width: 260, height: 100 }],
   ]);
 }
+
+test("a short default board grows vertically for fitted feed rows and a 210-pixel desk", () => {
+  for (const count of [2, 3, 4]) {
+    const sources = Array.from({ length: count }, (_, index) => ({
+      ...source(`monitor-${index}`),
+      width: 1920,
+      height: 1080,
+    }));
+    const tree = buildWorkspaceLayout(sources);
+    const original = JSON.stringify(tree);
+    const minimums = {
+      ...fitMinimums(sources),
+      extra: { width: 260, height: 210 },
+    };
+    const viewport = { width: 1004, height: 600 };
+    const before = measureDock(tree, { x: 0, y: 0, ...viewport }, minimums);
+    const required = minimumWorkspaceHeight(tree, sources, viewport, minimums);
+    const board = { ...viewport, height: Math.max(viewport.height, required) };
+    const fitted = fitWorkspaceLayout(tree, sources, board, minimums);
+    const { panes } = measureDock(fitted, { x: 0, y: 0, ...board }, minimums);
+    assert.equal(JSON.stringify(tree), original);
+    assert.equal(board.width, viewport.width);
+    assert.equal(
+      minimumWorkspaceHeight(tree, sources, board, minimums),
+      required,
+      "the grown height cannot feed back into another growth request",
+    );
+    if (count === 2) assert.equal(board.height, viewport.height);
+    else assert.ok(board.height > viewport.height);
+    for (const item of sources) {
+      const pane = panes[item.id]!;
+      const rowHeight = Math.max(
+        ...sources
+          .filter((other) => panes[other.id]!.y === pane.y)
+          .map((other) => (panes[other.id]!.width - 2) / (16 / 9) + 74),
+      );
+      assert.equal(pane.width, before.panes[item.id]!.width);
+      assert.ok(Math.abs(pane.height - rowHeight) <= 1);
+      assert.ok(pane.x >= 0 && pane.x + pane.width <= viewport.width);
+      assert.ok(panes.extra!.y >= pane.y + pane.height + DOCK_GAP);
+    }
+    assert.equal(panes["monitor-0"]!.y, panes["monitor-1"]!.y);
+    if (count === 4) {
+      assert.equal(panes["monitor-2"]!.y, panes["monitor-3"]!.y);
+      assert.equal(panes["monitor-2"]!.width, panes["monitor-0"]!.width);
+    }
+    assert.ok(panes.extra!.height >= 210);
+    assert.equal(panes.extra!.y + panes.extra!.height, board.height);
+    assert.equal(
+      panes.assistant!.height,
+      Math.round((board.height - DOCK_GAP) * 0.75),
+    );
+    assert.deepEqual(paneIds(fitted), paneIds(tree));
+  }
+});
+
+test("default height preserves portrait aspects and sidebar minima at the same width", () => {
+  const sources = Array.from({ length: 4 }, (_, index) => ({
+    ...source(`portrait-${index}`),
+    width: 1080,
+    height: 1920,
+  }));
+  const tree = buildWorkspaceLayout(sources);
+  const minimums = {
+    ...fitMinimums(sources),
+    extra: { width: 260, height: 210 },
+    assistant: { width: 300, height: 600 },
+    activity: { width: 260, height: 220 },
+  };
+  const viewport = { width: 1004, height: 600 };
+  const board = {
+    ...viewport,
+    height: minimumWorkspaceHeight(tree, sources, viewport, minimums),
+  };
+  const fitted = fitWorkspaceLayout(tree, sources, board, minimums);
+  const { panes } = measureDock(fitted, { x: 0, y: 0, ...board }, minimums);
+  for (const item of sources) {
+    const pane = panes[item.id]!;
+    const rowHeight = Math.max(
+      ...sources
+        .filter((other) => panes[other.id]!.y === pane.y)
+        .map((other) => (panes[other.id]!.width - 2) / (9 / 16) + 74),
+    );
+    assert.ok(Math.abs(pane.height - rowHeight) <= 1);
+    assert.ok(pane.x + pane.width <= viewport.width);
+  }
+  assert.ok(panes.extra!.height >= 210);
+  assert.ok(panes.assistant!.height >= 600);
+  assert.ok(panes.activity!.height >= 220);
+  assert.equal(
+    panes.assistant!.height,
+    Math.round((board.height - DOCK_GAP) * 0.75),
+  );
+});
+
+test("taller sidebar minima preserve its 75/25 ratio without widening feed columns", () => {
+  const sources = [source("monitor-a"), source("monitor-b")];
+  const tree = buildWorkspaceLayout(sources);
+  const minimums = {
+    ...fitMinimums(sources),
+    extra: { width: 260, height: 210 },
+    assistant: { width: 300, height: 600 },
+    activity: { width: 260, height: 220 },
+  };
+  const size = {
+    width: 1004,
+    height: minimumWorkspaceHeight(
+      tree,
+      sources,
+      { width: 1004, height: 600 },
+      minimums,
+    ),
+  };
+  const fitted = fitWorkspaceLayout(tree, sources, size, minimums);
+  const { panes } = measureDock(fitted, { x: 0, y: 0, ...size }, minimums);
+  assert.equal(size.height, 888);
+  assert.equal(panes.assistant!.height, 660);
+  assert.equal(panes.activity!.height, 220);
+  assert.ok(panes.extra!.height >= 210);
+  for (const item of sources)
+    assert.ok(panes[item.id]!.x + panes[item.id]!.width <= size.width);
+});
+
+test("default height reserves tool minima without a valid width or any source", () => {
+  const sources = [source("monitor-a")];
+  const tree = buildWorkspaceLayout(sources);
+  const minimums = {
+    ...fitMinimums(sources),
+    extra: { width: 260, height: 210 },
+  };
+  for (const width of [0, -1, NaN, Infinity])
+    assert.equal(
+      minimumWorkspaceHeight(tree, sources, { width, height: 600 }, minimums),
+      minimumDock(tree, minimums).height,
+    );
+  const empty = buildWorkspaceLayout([]);
+  assert.equal(
+    minimumWorkspaceHeight(
+      empty,
+      [],
+      { width: 1004, height: 0 },
+      {
+        workspace: { width: 320, height: 200 },
+        extra: { width: 260, height: 210 },
+        assistant: { width: 300, height: 240 },
+        activity: { width: 260, height: 100 },
+      },
+    ),
+    418,
+  );
+});
 
 test("source aspect ratios accept landscape, portrait and ultrawide dimensions and reject invalid dimensions", () => {
   for (const dimensions of [
