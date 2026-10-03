@@ -60,6 +60,290 @@ function json(response: ServerResponse, value: unknown) {
   response.end(JSON.stringify(value));
 }
 
+function llamaCompletion(content = "Observed fixture") {
+  return {
+    choices: [
+      {
+        index: 0,
+        finish_reason: "stop",
+        message: { role: "assistant", content },
+      },
+    ],
+  };
+}
+
+test("llama.cpp discovery uses model IDs and explicit capabilities without name guessing or loading", async (t) => {
+  const requests: string[] = [];
+  let models: unknown = [
+    { id: "llava-name-without-proof", meta: null },
+    {
+      id: "vision",
+      architecture: { input_modalities: ["text", "image"] },
+      meta: {},
+    },
+    {
+      id: "text",
+      architecture: { input_modalities: ["text"] },
+      status: { value: "sleeping" },
+    },
+  ];
+  const endpoint = await server(t, (request, response) => {
+    requests.push(`${request.method} ${request.url}`);
+    json(response, { data: models });
+  });
+  const provider = createProvider({ provider: "llamacpp", endpoint });
+  const found = await provider.discover(new AbortController().signal);
+  assert.deepEqual(
+    found.map((m) => [m.id, m.vision, m.loaded]),
+    [
+      ["llava-name-without-proof", "unknown", false],
+      ["vision", "declared", true],
+      ["text", "unsupported", false],
+    ],
+  );
+  for (const invalid of [
+    null,
+    [{ id: "" }],
+    [{ id: "repeat" }, { id: "repeat" }],
+    Array.from({ length: 257 }, (_, i) => ({ id: String(i) })),
+    [{ id: "bad", architecture: { input_modalities: [7] } }],
+  ]) {
+    models = invalid;
+    await assert.rejects(provider.discover(new AbortController().signal));
+  }
+  assert(requests.every((path) => path === "GET /v1/models"));
+});
+
+test("llama.cpp image requests preserve model and chronological selected frames with bounded JSON mode", async (t) => {
+  const received: Record<string, any>[] = [];
+  const endpoint = await server(t, async (request, response) => {
+    assert.equal(request.url, "/v1/chat/completions");
+    assert.equal(request.headers.authorization, "Bearer fixture-token");
+    received.push(await body(request));
+    json(response, llamaCompletion('{"summary":"Recorded sequence"}'));
+  });
+  const provider = createProvider({
+    provider: "llamacpp",
+    endpoint,
+    token: "fixture-token",
+  });
+  const frames = [frame(), frame()];
+  frames[0].capturedAt = 1000;
+  frames[1].capturedAt = 3000;
+  for (const mode of ["observe", "plan", "chat"] as const) {
+    const value = await provider.analyze(
+      {
+        modelId: "selected-alias",
+        frames,
+        question: "Describe",
+        mode,
+        structured: mode === "observe",
+      },
+      new AbortController().signal,
+    );
+    assert.equal(value, '{"summary":"Recorded sequence"}');
+  }
+  for (const input of received) {
+    assert.equal(input.model, "selected-alias");
+    assert.equal(input.stream, false);
+    assert.equal(input.max_tokens, 1024);
+    assert.equal(input.reasoning_effort, "none");
+    assert.deepEqual(input.chat_template_kwargs, { enable_thinking: false });
+    assert.match(input.messages[0].content, /untrusted evidence/);
+    assert.deepEqual(
+      input.messages[1].content.map((part: any) => part.type),
+      ["text", "image_url", "image_url"],
+    );
+    assert.deepEqual(
+      input.messages[1].content.slice(1).map((part: any) => part.image_url.url),
+      frames.map((f) => f.dataUrl),
+    );
+    assert.match(
+      input.messages[1].content[0].text,
+      /captured 1000.*captured 3000/,
+    );
+    assert.equal(input.tools, undefined);
+    assert.equal(input.functions, undefined);
+  }
+  assert.deepEqual(received[0].response_format, { type: "json_object" });
+  assert.deepEqual(received[1].response_format, { type: "json_object" });
+  assert.match(received[1].messages[1].content[0].text, /Every step requires/);
+  assert.equal(received[2].response_format, undefined);
+});
+
+test("llama.cpp historical summaries use only validated caption text", async (t) => {
+  const received: Record<string, any>[] = [];
+  const endpoint = await server(t, async (request, response) => {
+    received.push(await body(request));
+    json(response, llamaCompletion("The recorded circle moved right."));
+  });
+  const provider = createProvider({ provider: "llamacpp", endpoint });
+  assert.equal(
+    await provider.summarize!(historyInput(), new AbortController().signal),
+    "The recorded circle moved right.",
+  );
+  const input = received[0];
+  assert.equal(input.max_tokens, 512);
+  assert.equal(input.model, "vision");
+  assert.match(input.messages[1].content, /historical caption records/);
+  assert.match(input.messages[1].content, /8000/);
+  assert.doesNotMatch(
+    JSON.stringify(input),
+    /data:image|image_url|previous_response_id/,
+  );
+  assert.equal(input.tools, undefined);
+  await assert.rejects(
+    provider.summarize!(
+      { ...historyInput(), captions: [] },
+      new AbortController().signal,
+    ),
+  );
+  await assert.rejects(
+    provider.summarize!(
+      {
+        ...historyInput(),
+        captions: Array.from({ length: 25 }, () => ({
+          ...historyInput().captions[0],
+          summary: "x".repeat(1500),
+        })),
+      },
+      new AbortController().signal,
+    ),
+    /context limit/,
+  );
+  assert.equal(received.length, 1);
+});
+
+test("llama.cpp rejects tools, incomplete or ambiguous assistant completions without exposing output", async (t) => {
+  let output: unknown;
+  const endpoint = await server(t, (_request, response) =>
+    json(response, output),
+  );
+  const provider = createProvider({ provider: "llamacpp", endpoint });
+  for (const invalid of [
+    { choices: [] },
+    { choices: [llamaCompletion().choices[0], llamaCompletion().choices[0]] },
+    { choices: [{ ...llamaCompletion().choices[0], finish_reason: "length" }] },
+    { choices: [{ ...llamaCompletion().choices[0], index: 1 }] },
+    llamaCompletion(""),
+    llamaCompletion("x".repeat(16_385)),
+    {
+      choices: [
+        {
+          index: 0,
+          finish_reason: "stop",
+          message: { role: "user", content: "secret-fixture" },
+        },
+      ],
+    },
+    {
+      choices: [
+        {
+          index: 0,
+          finish_reason: "stop",
+          message: {
+            role: "assistant",
+            content: "secret-fixture",
+            tool_calls: [{}],
+          },
+        },
+      ],
+    },
+    {
+      choices: [
+        {
+          index: 0,
+          finish_reason: "stop",
+          message: {
+            role: "assistant",
+            content: "secret-fixture",
+            tool_calls: "bad",
+          },
+        },
+      ],
+    },
+    {
+      choices: [
+        {
+          index: 0,
+          finish_reason: "stop",
+          message: {
+            role: "assistant",
+            content: "secret-fixture",
+            function_call: {},
+          },
+        },
+      ],
+    },
+    {
+      choices: [
+        {
+          index: 0,
+          finish_reason: "tool_calls",
+          message: { role: "assistant", content: "secret-fixture" },
+        },
+      ],
+    },
+  ]) {
+    output = invalid;
+    await assert.rejects(
+      provider.analyze(
+        {
+          modelId: "vision",
+          frames: [frame()],
+          question: "Describe",
+          mode: "chat",
+        },
+        new AbortController().signal,
+      ),
+      (error) =>
+        error instanceof Error && !error.message.includes("secret-fixture"),
+    );
+    await assert.rejects(
+      provider.summarize!(historyInput(), new AbortController().signal),
+    );
+  }
+});
+
+test("llama.cpp inherits cancellation, response and serialized image limits", async (t) => {
+  let requests = 0;
+  const endpoint = await server(t, async (request, response) => {
+    requests++;
+    await body(request);
+    response.end("x".repeat(RESPONSE_LIMIT + 1));
+  });
+  const provider = createProvider({ provider: "llamacpp", endpoint });
+  const controller = new AbortController();
+  controller.abort();
+  await assert.rejects(provider.discover(controller.signal), /cancelled/);
+  assert.equal(requests, 0);
+  const bytes = Buffer.concat([
+    Buffer.from(png.split(",")[1], "base64"),
+    Buffer.alloc(900_000),
+  ]);
+  await assert.rejects(
+    provider.analyze(
+      {
+        modelId: "vision",
+        question: "Describe",
+        mode: "observe",
+        frames: Array.from({ length: 4 }, () => ({
+          ...frame(),
+          dataUrl: `data:image/png;base64,${bytes.toString("base64")}`,
+        })),
+      },
+      new AbortController().signal,
+    ),
+    /serialized request limit/,
+  );
+  assert.equal(requests, 0);
+  await assert.rejects(
+    provider.summarize!(historyInput(), new AbortController().signal),
+    /2 MiB/,
+  );
+  assert.equal(requests, 1);
+});
+
 const historyInput = (): TextSummaryInput => ({
   modelId: "vision",
   question: "What changed?",

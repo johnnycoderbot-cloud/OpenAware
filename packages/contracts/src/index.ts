@@ -3,7 +3,7 @@ import { z } from "zod";
 export const MAX_SOURCES = 4;
 export const MAX_FRAME_BYTES = 1_048_576;
 export const MAX_SEMANTIC_RULES = 8;
-export type ProviderKind = "lmstudio" | "ollama";
+export type ProviderKind = "lmstudio" | "ollama" | "llamacpp";
 export type SourceKind =
   "demo" | "camera" | "virtual_camera" | "monitor" | "window";
 export type SessionStatus = "idle" | "monitoring" | "paused" | "stopped";
@@ -267,7 +267,7 @@ export const commandSchema = z.discriminatedUnion("type", [
   z
     .object({
       type: z.literal("provider.discover"),
-      provider: z.enum(["lmstudio", "ollama"]),
+      provider: z.enum(["lmstudio", "ollama", "llamacpp"]),
       endpoint: z.string().max(256),
       token: z.string().max(4096).optional(),
     })
@@ -404,7 +404,7 @@ export interface OpenAwareBridge {
   quit(): Promise<void>;
 }
 export const initialSnapshot = (): Snapshot => ({
-  version: "0.3.0",
+  version: "0.3.1",
   session: "idle",
   epoch: 1,
   sources: [],

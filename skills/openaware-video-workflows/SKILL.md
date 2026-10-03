@@ -7,7 +7,7 @@ description: Use a running OpenAware app to watch granted local feeds, search re
 
 Use the OpenAware CLI bundled with the app or built in the repository. It talks to the running local application; it is not NVIDIA's VSS CLI and requires no VSS server.
 
-Run with Node.js 24 or later. An installed copy of this skill includes `scripts/openaware.cjs` beside its instructions; run `node <skill-folder>/scripts/openaware.cjs` in place of `node dist/cli.cjs` below. Otherwise locate the project CLI or the installed app's `resources/cli.cjs`. In a source checkout run `npm run build` once if `dist/cli.cjs` is missing. The app must be launched with `--enable-cli`. Users grant sources, choose a local LM Studio/Ollama model, and pass the vision probe in the app before monitoring. A fresh launch restores no feeds or model binding.
+Run with Node.js 24 or later. An installed copy of this skill includes `scripts/openaware.cjs` beside its instructions; run `node <skill-folder>/scripts/openaware.cjs` in place of `node dist/cli.cjs` below. Otherwise locate the project CLI or the installed app's `resources/cli.cjs`. In a source checkout run `npm run build` once if `dist/cli.cjs` is missing. The app must be launched with `--enable-cli`. Users grant sources, choose a local LM Studio, Ollama or llama.cpp model, and pass the vision probe in the app before monitoring. A fresh launch restores no feeds or model binding.
 
 ```powershell
 node dist/cli.cjs status

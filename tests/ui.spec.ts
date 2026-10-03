@@ -610,3 +610,468 @@ test("local connection, masked chat, caption memory and rule controls preserve e
     }
   }
 });
+
+test("llama.cpp verifies unknown vision support and keeps live questions separate from historical memory", async () => {
+  test.setTimeout(90_000);
+  type ContentPart =
+    | { type: "text"; text: string }
+    | { type: "image_url"; image_url: { url: string } };
+  type CompletionRequest = {
+    model: string;
+    messages: Array<{ role: string; content: string | ContentPart[] }>;
+    stream: boolean;
+    max_tokens: number;
+    temperature: number;
+    reasoning_effort: string;
+    chat_template_kwargs: { enable_thinking: boolean };
+  };
+  type RequestKind = "probe" | "observe" | "chat" | "summary";
+  const modelId = "vision-llama";
+  const observationText =
+    "Llama synthetic observation: the selected demo changed. Deterministic fixture, not actual inference.";
+  const answerText =
+    "Llama synthetic scoped answer: only the selected demo was provided. Deterministic fixture, not actual inference.";
+  const summaryText =
+    "Llama historical fixture summary of sampled captions; this is not current desktop evidence.";
+  const userPrompt = (request: CompletionRequest) =>
+    request.messages
+      .filter((message) => message.role === "user")
+      .map((message) =>
+        typeof message.content === "string"
+          ? message.content
+          : message.content
+              .filter((part) => part.type === "text")
+              .map((part) => part.text)
+              .join("\n"),
+      )
+      .join("\n");
+  const imageUrls = (request: CompletionRequest) =>
+    request.messages.flatMap((message) =>
+      typeof message.content === "string"
+        ? []
+        : message.content
+            .filter((part) => part.type === "image_url")
+            .map((part) => part.image_url.url),
+    );
+  const requests: Array<{
+    kind: RequestKind;
+    request: CompletionRequest;
+    prompt: string;
+  }> = [];
+  const routes: string[] = [];
+  const server = createServer((req, res) => {
+    let body = "";
+    req.on("data", (chunk) => {
+      body += chunk;
+    });
+    req.on("end", () => {
+      routes.push(`${req.method} ${req.url}`);
+      res.setHeader("Content-Type", "application/json");
+      if (req.method === "GET" && req.url === "/v1/models") {
+        // No architecture/modalities metadata: only the synthetic probe may
+        // establish image support, regardless of the fixture's model name.
+        res.end(JSON.stringify({ object: "list", data: [{ id: modelId }] }));
+        return;
+      }
+      if (req.method !== "POST" || req.url !== "/v1/chat/completions") {
+        res.statusCode = 404;
+        res.end("{}");
+        return;
+      }
+      const request = JSON.parse(body) as CompletionRequest;
+      const prompt = userPrompt(request);
+      const kind: RequestKind | undefined = prompt.includes(
+        "synthetic image capability test",
+      )
+        ? "probe"
+        : prompt.includes("LLAMACPP_SCOPE_TEST")
+          ? "chat"
+          : prompt.includes("Summarize only these historical caption records")
+            ? "summary"
+            : prompt.includes("Describe what is visible now")
+              ? "observe"
+              : undefined;
+      if (!kind) {
+        res.statusCode = 400;
+        res.end(JSON.stringify({ error: "Unknown synthetic fixture prompt" }));
+        return;
+      }
+      requests.push({ kind, request, prompt });
+      const content =
+        kind === "probe"
+          ? "Red square, blue circle, OPENAWARE 42. Synthetic fixture response."
+          : kind === "observe"
+            ? observationText
+            : kind === "chat"
+              ? answerText
+              : summaryText;
+      res.end(
+        JSON.stringify({
+          id: `synthetic-${requests.length}`,
+          object: "chat.completion",
+          model: modelId,
+          choices: [
+            {
+              index: 0,
+              finish_reason: "stop",
+              message: { role: "assistant", content },
+            },
+          ],
+        }),
+      );
+    });
+  });
+  let app: ElectronApplication | undefined;
+  try {
+    await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
+    const address = server.address();
+    if (!address || typeof address === "string")
+      throw new Error("Missing llama.cpp fixture server address");
+    app = await electron.launch({
+      executablePath: process.env.OPENAWARE_EXECUTABLE,
+      args: [
+        ...(process.env.OPENAWARE_EXECUTABLE ? [] : ["."]),
+        "--disable-backgrounding-occluded-windows",
+        "--disable-renderer-backgrounding",
+        "--disable-background-timer-throttling",
+      ],
+      cwd: resolve("."),
+      env: environment(),
+    });
+    const page = await app.firstWindow();
+    page.setDefaultTimeout(10_000);
+    await app.evaluate(({ BrowserWindow }) => {
+      const window = BrowserWindow.getAllWindows()[0]!;
+      window.webContents.setBackgroundThrottling(false);
+      window.showInactive();
+    });
+    for (const name of ["Llama Alpha demo", "Llama Beta demo"]) {
+      await page.getByTestId("add-source").click();
+      await page.getByLabel("Source name", { exact: true }).fill(name);
+      await page
+        .getByRole("button", { name: "Connect source", exact: true })
+        .click();
+      await expect(
+        page.getByRole("heading", { name, exact: true }),
+      ).toBeVisible();
+    }
+    const sourceIds = await page.evaluate(async () => {
+      const state = await window.openAware!.invoke({ type: "state.get" });
+      return {
+        alpha: state.sources.find(
+          (source) => source.name === "Llama Alpha demo",
+        )!.id,
+        beta: state.sources.find((source) => source.name === "Llama Beta demo")!
+          .id,
+      };
+    });
+    const beta = page.locator(
+      `[data-testid="source-tile"][data-source-id="${sourceIds.beta}"]`,
+    );
+    const betaSettings = beta.getByRole("button", {
+      name: "Settings for Llama Beta demo",
+      exact: true,
+    });
+    await betaSettings.click();
+    const betaAnalysis = beta.getByRole("checkbox", {
+      name: "AI analysis",
+      exact: true,
+    });
+    await betaAnalysis.click();
+    await expect(betaAnalysis).not.toBeChecked();
+    await betaSettings.click();
+    await app.evaluate(({ BrowserWindow }) => {
+      BrowserWindow.getAllWindows()[0]!.setContentSize(1024, 720);
+    });
+    await expect.poll(() => page.evaluate(() => innerWidth)).toBe(1024);
+    await page.getByTestId("connections").click();
+    const readableProviderCards = () =>
+      page.locator(".provider-option").evaluateAll(
+        (cards) =>
+          cards.length === 3 &&
+          cards.every((card) => {
+            const bounds = card.getBoundingClientRect();
+            const title = card.querySelector("strong")!.getBoundingClientRect();
+            const description = card
+              .querySelector("span:not(.provider-icon)")!
+              .getBoundingClientRect();
+            return (
+              bounds.height <= 100 &&
+              description.width >= 90 &&
+              Math.abs(description.left - title.left) <= 1 &&
+              description.top >= title.bottom - 1 &&
+              description.right <= bounds.right - 8 &&
+              description.bottom <= bounds.bottom - 8
+            );
+          }),
+      );
+    await expect.poll(readableProviderCards).toBe(true);
+    const provider = page.getByRole("button", {
+      name: "llama.cpp",
+      exact: true,
+    });
+    await provider.click();
+    await expect(provider).toHaveAttribute("aria-pressed", "true");
+    await expect.poll(readableProviderCards).toBe(true);
+    const endpoint = page.getByLabel("Server endpoint", { exact: true });
+    await expect(endpoint).toHaveValue("http://127.0.0.1:8080");
+    await expect(endpoint).toHaveAttribute(
+      "placeholder",
+      "http://127.0.0.1:8080",
+    );
+    await endpoint.fill(`http://127.0.0.1:${address.port}`);
+    await page
+      .getByRole("button", { name: "Discover models", exact: true })
+      .click();
+    const model = page.getByRole("button", { name: /vision-llama/ });
+    await expect(model).toContainText("Test vision");
+    await expect(model).toBeEnabled();
+    expect(
+      await page.evaluate(
+        async () =>
+          (await window.openAware!.invoke({ type: "state.get" })).models[0]
+            .vision,
+      ),
+    ).toBe("unknown");
+    await model.click();
+    await expect
+      .poll(() =>
+        page.evaluate(
+          async () =>
+            (await window.openAware!.invoke({ type: "state.get" })).binding,
+        ),
+      )
+      .toMatchObject({
+        provider: "llamacpp",
+        modelId,
+        status: "selected",
+      });
+    expect(requests).toHaveLength(0);
+    await page
+      .getByRole("button", { name: "Run vision test", exact: true })
+      .click();
+    await expect(
+      page.getByText(
+        "Image response verified. Return to Overview and explicitly start watching.",
+      ),
+    ).toBeVisible();
+    expect(requests.map((item) => item.kind)).toEqual(["probe"]);
+    expect(imageUrls(requests[0].request)).toHaveLength(1);
+    await page.getByRole("button", { name: "Overview", exact: true }).click();
+    expect(
+      await page.evaluate(
+        async () =>
+          (await window.openAware!.invoke({ type: "state.get" })).session,
+      ),
+    ).toBe("paused");
+    await page
+      .getByRole("button", { name: "Resume watching", exact: true })
+      .click();
+    await expect
+      .poll(
+        () =>
+          page.evaluate(async (alphaId) => {
+            const state = await window.openAware!.invoke({ type: "state.get" });
+            return state.observations.some(
+              (observation) =>
+                observation.provider === "llamacpp" &&
+                observation.modelId === "vision-llama" &&
+                observation.status === "current" &&
+                observation.summary.startsWith(
+                  "Llama synthetic observation:",
+                ) &&
+                observation.sourceIds.length === 1 &&
+                observation.sourceIds[0] === alphaId &&
+                (observation.frameCount ?? 1) >= 1,
+            );
+          }, sourceIds.alpha),
+        { timeout: 15_000 },
+      )
+      .toBe(true);
+    const observed = requests.find((item) => item.kind === "observe")!;
+    expect(imageUrls(observed.request).length).toBeGreaterThanOrEqual(1);
+    expect(imageUrls(observed.request).length).toBeLessThanOrEqual(3);
+    expect(observed.prompt).toContain(sourceIds.alpha);
+    expect(observed.prompt).not.toContain(sourceIds.beta);
+    await page.getByRole("button", { name: "Pause AI", exact: true }).click();
+    await expect
+      .poll(() =>
+        page.evaluate(
+          async () =>
+            (await window.openAware!.invoke({ type: "state.get" })).session,
+        ),
+      )
+      .toBe("paused");
+    // Pause clears engine frames while keeping lastFrameAt. Require a newer
+    // actual capture before the selected-source question, within the usual 3s.
+    const questionCaptureAfter = await page.evaluate(() => Date.now());
+    const questionSources = page.getByRole("button", {
+      name: "Choose question sources",
+      exact: true,
+    });
+    await questionSources.click();
+    await page
+      .getByRole("checkbox", { name: "Llama Beta demo", exact: true })
+      .uncheck();
+    await expect(
+      page.getByRole("checkbox", { name: "Llama Alpha demo", exact: true }),
+    ).toBeChecked();
+    await questionSources.click();
+    await page
+      .getByRole("textbox", { name: "Ask about your workspace" })
+      .fill("Describe LLAMACPP_SCOPE_TEST using only my selected source.");
+    await expect
+      .poll(() =>
+        page.evaluate(
+          async ({ alphaId, after }) => {
+            const state = await window.openAware!.invoke({ type: "state.get" });
+            const alpha = state.sources.find((source) => source.id === alphaId);
+            return (
+              alpha?.analysisEnabled &&
+              alpha.status === "live" &&
+              alpha.lastFrameAt !== undefined &&
+              alpha.lastFrameAt > after &&
+              Date.now() - alpha.lastFrameAt < 3000
+            );
+          },
+          { alphaId: sourceIds.alpha, after: questionCaptureAfter },
+        ),
+      )
+      .toBe(true);
+    await page
+      .getByRole("button", { name: "Send question", exact: true })
+      .click();
+    await expect(
+      page
+        .getByRole("region", { name: "Ask your workspace", exact: true })
+        .getByText(answerText, { exact: true }),
+    ).toBeVisible();
+    const chat = requests.find((item) => item.kind === "chat")!;
+    expect(imageUrls(chat.request)).toHaveLength(1);
+    expect(chat.prompt).toContain(sourceIds.alpha);
+    expect(chat.prompt).not.toContain(sourceIds.beta);
+    expect(
+      await page.evaluate(
+        async () =>
+          (await window.openAware!.invoke({ type: "state.get" })).chat
+            .filter((message) => message.role === "assistant")
+            .at(-1)?.sourceIds,
+      ),
+    ).toEqual([sourceIds.alpha]);
+    const memory = page.getByRole("region", {
+      name: "Video memory",
+      exact: true,
+    });
+    await memory
+      .getByRole("combobox", { name: "Memory source", exact: true })
+      .selectOption(sourceIds.alpha);
+    const requestsBeforeSearch = requests.length;
+    const search = memory.getByRole("searchbox", {
+      name: "Search captions",
+      exact: true,
+    });
+    const searchButton = memory.getByRole("button", {
+      name: "Search captions",
+      exact: true,
+    });
+    await search.fill("NONMATCHING_LLAMACPP_NEEDLE_78321");
+    await searchButton.click();
+    await expect(memory.locator(".memory-caption-row")).toHaveCount(0);
+    await expect(
+      memory.getByText("No captions in this scope", { exact: true }),
+    ).toBeVisible();
+    await search.fill("Llama synthetic observation");
+    await searchButton.click();
+    const captions = memory.getByRole("list", {
+      name: "Historical captions",
+      exact: true,
+    });
+    await expect(captions).toContainText(observationText);
+    await expect(captions).toContainText("Llama Alpha demo");
+    await expect(captions).toContainText("llama.cpp");
+    await expect(captions).not.toContainText("Llama Beta demo");
+    expect(requests).toHaveLength(requestsBeforeSearch);
+    await memory
+      .getByRole("button", { name: "Summarize history", exact: true })
+      .click();
+    const historical = memory.getByRole("region", {
+      name: "Historical summary",
+      exact: true,
+    });
+    await expect(historical).toContainText("completed");
+    await expect(historical).toContainText(summaryText);
+    await expect(historical).toContainText("Llama Alpha demo");
+    const summary = requests.find((item) => item.kind === "summary")!;
+    expect(imageUrls(summary.request)).toHaveLength(0);
+    expect(summary.prompt).toContain("Caption records:");
+    expect(summary.prompt).toContain("Llama Alpha demo");
+    expect(summary.prompt).not.toContain("Llama Beta demo");
+    expect(summary.request.max_tokens).toBe(512);
+    const finalEvidence = await page.evaluate(async () => {
+      const state = await window.openAware!.invoke({ type: "state.get" });
+      return {
+        session: state.session,
+        binding: state.binding,
+        summary: state.historySummary,
+        pendingPlan: state.pendingPlan,
+      };
+    });
+    expect(finalEvidence).toMatchObject({
+      session: "paused",
+      binding: { provider: "llamacpp", modelId, status: "verified" },
+      summary: {
+        provider: "llamacpp",
+        modelId,
+        status: "completed",
+        sourceIds: [sourceIds.alpha],
+      },
+    });
+    expect(finalEvidence.pendingPlan).toBeUndefined();
+    for (const { kind, request } of requests) {
+      expect(request.model).toBe(modelId);
+      expect(request.stream).toBe(false);
+      expect(request.temperature).toBe(0.1);
+      expect(request.reasoning_effort).toBe("none");
+      expect(request.chat_template_kwargs.enable_thinking).toBe(false);
+      expect(request.messages[0]).toMatchObject({ role: "system" });
+      expect(request.max_tokens).toBe(kind === "summary" ? 512 : 1024);
+      for (const url of imageUrls(request))
+        expect(url).toMatch(/^data:image\/jpeg;base64,[A-Za-z0-9+/]+=*$/);
+    }
+    expect(routes.filter((route) => route === "GET /v1/models")).toHaveLength(
+      1,
+    );
+    expect(
+      routes.every(
+        (route) =>
+          route === "GET /v1/models" || route === "POST /v1/chat/completions",
+      ),
+    ).toBe(true);
+    await page.getByTestId("stop-all").click();
+    await expect
+      .poll(() =>
+        page.evaluate(async () => {
+          const state = await window.openAware!.invoke({ type: "state.get" });
+          return {
+            session: state.session,
+            stopped: state.sources.every(
+              (source) => source.status === "stopped",
+            ),
+          };
+        }),
+      )
+      .toEqual({ session: "stopped", stopped: true });
+    await expect(
+      page.locator('[data-testid="source-tile"] canvas'),
+    ).toHaveCount(0);
+    await expect(
+      memory.getByRole("button", { name: "Summarize history", exact: true }),
+    ).toBeDisabled();
+  } finally {
+    try {
+      await closeServer(server);
+    } finally {
+      await closeElectron(app);
+    }
+  }
+});

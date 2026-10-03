@@ -74,6 +74,16 @@ const tabs = [
   { name: "Connections" as Tab, icon: Cpu },
   { name: "Event log" as Tab, icon: Terminal },
 ];
+const providerLabels: Record<ProviderKind, string> = {
+  lmstudio: "LM Studio",
+  ollama: "Ollama",
+  llamacpp: "llama.cpp",
+};
+const providerEndpoints: Record<ProviderKind, string> = {
+  lmstudio: "http://127.0.0.1:1234",
+  ollama: "http://127.0.0.1:11434",
+  llamacpp: "http://127.0.0.1:8080",
+};
 const time = (at: number) =>
   new Date(at).toLocaleTimeString([], {
     hour: "2-digit",
@@ -1575,7 +1585,7 @@ function VideoMemory({
                 </div>
                 <p>{observation.summary}</p>
                 <span className="memory-record-meta">
-                  {observation.provider} · {observation.modelId}
+                  {providerLabels[observation.provider]} · {observation.modelId}
                   {observation.ruleEvidence
                     ?.map(
                       (evidence) =>
@@ -1924,10 +1934,11 @@ function Connections({
         <div className="provider-options">
           <button
             className={`provider-option ${provider === "lmstudio" ? "selected" : ""}`}
+            aria-label="LM Studio"
             aria-pressed={provider === "lmstudio"}
             onClick={() => {
               setProvider("lmstudio");
-              setEndpoint("http://127.0.0.1:1234");
+              setEndpoint(providerEndpoints.lmstudio);
             }}
           >
             <span className="provider-icon">
@@ -1939,10 +1950,11 @@ function Connections({
           </button>
           <button
             className={`provider-option ${provider === "ollama" ? "selected" : ""}`}
+            aria-label="Ollama"
             aria-pressed={provider === "ollama"}
             onClick={() => {
               setProvider("ollama");
-              setEndpoint("http://127.0.0.1:11434");
+              setEndpoint(providerEndpoints.ollama);
             }}
           >
             <span className="provider-icon">
@@ -1951,6 +1963,22 @@ function Connections({
             <strong>Ollama</strong>
             <span>Local model runtime</span>
             {provider === "ollama" && <CheckCircle2 size={17} />}
+          </button>
+          <button
+            className={`provider-option ${provider === "llamacpp" ? "selected" : ""}`}
+            aria-label="llama.cpp"
+            aria-pressed={provider === "llamacpp"}
+            onClick={() => {
+              setProvider("llamacpp");
+              setEndpoint(providerEndpoints.llamacpp);
+            }}
+          >
+            <span className="provider-icon">
+              <Terminal size={25} />
+            </span>
+            <strong>llama.cpp</strong>
+            <span>Local inference server</span>
+            {provider === "llamacpp" && <CheckCircle2 size={17} />}
           </button>
         </div>
         <form
@@ -1970,7 +1998,7 @@ function Connections({
             <input
               value={endpoint}
               onChange={(e) => setEndpoint(e.target.value)}
-              placeholder="http://127.0.0.1:1234"
+              placeholder={providerEndpoints[provider]}
               required
             />
           </label>
