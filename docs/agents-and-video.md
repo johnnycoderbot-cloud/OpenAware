@@ -1,6 +1,6 @@
 # Independent agents and video sources
 
-Version 0.4.0 development work is tracked in the [implementation handoff](../.omx/logs/independent-agents-video.md). This page describes the accepted behavior; final verification is recorded there.
+Version 0.4.0 delivery is tracked in the [implementation handoff](../.omx/logs/independent-agents-video.md). This page describes the accepted behavior; final verification is recorded there.
 
 ## Capacity and connections
 

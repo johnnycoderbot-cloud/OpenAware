@@ -28,6 +28,7 @@ Start with [PLAN.md](PLAN.md). The core documents are:
 | [Testing and release](docs/testing-release.md)                        | Automated fixtures, Windows hardware tests, packaging, and release evidence |
 | [Decision register](docs/decisions.md)                                | Proposed choices, unresolved questions, and decision owners                 |
 | [Independent agents and videos](docs/agents-and-video.md)             | Per-agent connections, assignments, PC videos and web-player links          |
+| [AI notes and small models research](.omx/research/note-taking-small-models.md) | Local note-taking approaches, compact specialists and Metis constraints |
 | [Background mode](docs/background-mode.md)                            | Configure a session, hide the dashboard, and use Show, Stop, or Quit        |
 | [Local video workflows](docs/local-video-workflows.md)                | Temporal samples, semantic alerts, caption memory, and opt-in CLI access    |
 | [OpenAware workflow skill](skills/openaware-video-workflows/SKILL.md) | Commands and boundaries for agents using the local CLI                      |
@@ -58,7 +59,7 @@ The prototype also implements local Ollama and llama.cpp adapters. Its bounded l
 
 ## Windows prototype
 
-Version 0.4.0 verification and delivery are tracked in the [independent agents/video handoff](.omx/logs/independent-agents-video.md). The historical [v0.3.3 developer prerelease](https://github.com/johnnycoderbot-cloud/OpenAware/releases/tag/v0.3.3), [desk/header ledger](.omx/logs/workspace-agent-desk.md) and [v0.3.2 audit](.omx/logs/adversarial-audit-v0.3.2.md) preserve earlier evidence. No model is bundled. Public platform sign-in/protected playback, personal monitor/camera capture, mixed-DPI behavior, native input effects, Bionic compatibility and sustained multi-model throughput need separate live acceptance evidence.
+Download the [v0.4.0 Windows developer prerelease](https://github.com/johnnycoderbot-cloud/OpenAware/releases/tag/v0.4.0). It passed 253 unit/integration tests and sixteen source desktop workflows; final packaged video checks passed twice. Installer payload and uploaded checksums were verified. Details are recorded in the [independent agents/video handoff](.omx/logs/independent-agents-video.md). The historical [v0.3.3 developer prerelease](https://github.com/johnnycoderbot-cloud/OpenAware/releases/tag/v0.3.3), [desk/header ledger](.omx/logs/workspace-agent-desk.md) and [v0.3.2 audit](.omx/logs/adversarial-audit-v0.3.2.md) preserve earlier evidence. No model is bundled. Public platform sign-in/protected playback, personal monitor/camera capture, mixed-DPI behavior, native input effects, Bionic compatibility and sustained multi-model throughput need separate live acceptance evidence.
 
 On this computer, the tested local Ollama model recognized a synthetic single image in about 18–20 seconds; three-image temporal inference and a historical summary each reached their 60-second limits. Background captions and summaries allow 60 seconds. Chat, synthetic probes and Operator allow 20 seconds; current chat/Operator evidence must also finish within 15 seconds of capture. Delayed background captions can remain as history, but evidence older than 15 seconds cannot trigger semantic alerts. These measurements do not establish useful continuous monitoring.
 

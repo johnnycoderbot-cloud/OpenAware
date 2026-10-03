@@ -1,6 +1,6 @@
 # Independent agents and video source handoff
 
-Date: 2026-10-03. Status: local verification complete; public delivery gates pending. [Execution plan](../plans/independent-agents-video.md).
+Date: 2026-10-03. Status: complete; public developer prerelease delivered. [Execution plan](../plans/independent-agents-video.md).
 
 Baseline v0.3.3 is clean and publicly delivered. The user authorized independent agent connections/feed assignments, PC videos and web links including YouTube, Facebook, TikTok, Instagram and X. Native workers own runtime, capture and UI slices. No personal feed or platform account is used for validation.
 
@@ -35,4 +35,6 @@ All media/source evidence is generated WebM, generated HTML or localhost HTTP an
 
 Windows x64 NSIS build succeeds after both final capture repairs. Extracted installer payloads match the tested unpacked package: app.asar SHA-256 `98c57a045cd4758794552467cd2fe16a237e4f877ef3478781b6ef145ed3b5c8`, bundled CLI SHA-256 `7ee4162f6a1e86d2a4b533b27d89e86981785c9cca82841c0aeeef386c527208`. Installer size is 114,965,042 bytes; SHA-256 `7b3624859b823d55c7416cb00649cbabbbbc95a82ce90e0d422b3fc0df6fb8a1`. Installer execution remains untested; the package is unsigned.
 
-Public delivery: pending. Next action: publish the exact tested source, require successful application/planning CI, upload the installer and checksum assets, then reopen the local updated app through the existing shortcut target.
+Public delivery: [v0.4.0 developer prerelease](https://github.com/johnnycoderbot-cloud/OpenAware/releases/tag/v0.4.0), built from source commit `343eb309738bf311e786c520039889153ec14065`. Exact-source [application checks](https://github.com/johnnycoderbot-cloud/OpenAware/actions/runs/37157081850) and [planning checks](https://github.com/johnnycoderbot-cloud/OpenAware/actions/runs/37157081832) passed on Windows and Ubuntu. The Windows source application run passed all sixteen desktop workflows; both platforms passed TypeScript, all 253 unit/integration tests and build. The public tag matches that source commit, and uploaded installer/checksum asset SHA-256 digests match the local files.
+
+The updated local app was reopened visibly, confirmed responding with its OpenAware window and ProductVersion 0.4.0.0. Existing Desktop and Start Menu shortcuts both target the updated unpacked executable and its icon. The session starts idle; no personal sources, models or platform accounts were selected. Native implementation tasks and independent reviews are complete.

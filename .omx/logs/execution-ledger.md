@@ -41,3 +41,5 @@ The owner's request to find bugs and try to break the app is tracked in the [0.3
 The owner's labeled source-button and lower agent-desk request is tracked in the [workspace agent desk ledger](workspace-agent-desk.md), including truthful empty/connected seats, source assignments and the final connection scope.
 
 The owner's independent-agent and local/web video request is tracked in the [independent agents and video handoff](independent-agents-video.md), with per-agent assignments/bindings, isolated playback, verification and remaining live platform gates.
+
+The subsequent AI note-taking and very small specialized-model request is tracked in the [research plan](../plans/note-taking-small-models.md) and [source-backed research note](../research/note-taking-small-models.md). It proposes local note storage and specialist roles; no new audio, persistence, model or accelerator feature is claimed as implemented.
