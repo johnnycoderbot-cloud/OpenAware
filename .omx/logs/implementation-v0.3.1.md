@@ -16,6 +16,6 @@ Independent source review ended **approved** for the adapter and final UI. Manua
 
 ## Delivery
 
-Exact-commit CI and public package delivery are pending. Prior release records remain unchanged. Earlier packages from this slice are superseded by the corrected final layout build.
+Exact-commit CI and public package delivery are pending. Initial source commit `e4e27998c6ae45f73808fa6fbb71ef0789aa6920` passed both planning jobs and Ubuntu application checks, but Windows finished 10/11 desktop workflows: the new llama.cpp test passed while an existing visual divider lookup failed after window resizing. That test sampled layout before asynchronous pane geometry settled. A bounded atomic geometry wait preserves its strict alignment and resize/continuity checks; the corrected targeted packaged workflow passes (17.8 seconds), along with strict TypeScript and documentation checks. The production package is unchanged by this test correction. The draft release remains unpublished until corrected exact-commit checks pass. Prior release records remain unchanged. Earlier packages from this slice are superseded by the corrected final layout build.
 
 No process listens on the default port and llama-server/llama were not found on PATH. No runtime or model was installed or downloaded. Actual llama.cpp inference, server caching/logging, model suitability and throughput remain acceptance gates. Synthetic fixtures cannot establish those results.

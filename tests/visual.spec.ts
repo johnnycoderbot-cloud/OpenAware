@@ -462,37 +462,54 @@ async function dividerBetween(
   b: Locator,
   axis: "horizontal" | "vertical",
 ) {
-  const first = (await a.boundingBox())!;
-  const second = (await b.boundingBox())!;
-  const id = await page
-    .getByTestId("dashboard-dock-board")
-    .locator(`.dock-divider.${axis}`)
-    .evaluateAll(
-      (nodes, { first, second, axis }) => {
-        const sorted = [first, second].sort((a, b) =>
-          axis === "horizontal" ? a.x - b.x : a.y - b.y,
-        );
-        const left = sorted[0]!;
-        const right = sorted[1]!;
-        return nodes
-          .find((node) => {
-            const rect = node.getBoundingClientRect();
-            return axis === "horizontal"
-              ? rect.x >= left.x + left.width - 2 &&
-                  rect.right <= right.x + 2 &&
-                  Math.abs(rect.y - left.y) < 2
-              : rect.y >= left.y + left.height - 2 &&
-                  rect.bottom <= right.y + 2 &&
-                  Math.abs(rect.x - left.x) < 2;
-          })
-          ?.getAttribute("data-divider-id");
-      },
-      { first, second, axis },
-    );
-  expect(id).toBeTruthy();
-  return page
-    .getByTestId("dashboard-dock-board")
-    .locator(`[data-divider-id="${id}"]`);
+  const firstId = await a.getAttribute("data-pane-id");
+  const secondId = await b.getAttribute("data-pane-id");
+  if (!firstId || !secondId)
+    throw new Error("Divider lookup requires dashboard pane IDs");
+  const board = page.getByTestId("dashboard-dock-board");
+  let id: string | null = null;
+  // Window dimensions settle before ResizeObserver commits pane geometry.
+  // Read both panes and separators in one DOM snapshot, retrying the same
+  // strict gap/alignment check while that geometry settles.
+  await expect
+    .poll(async () => {
+      id = await board.evaluate(
+        (board, { firstId, secondId, axis }) => {
+          const children = Array.from(board.children);
+          const first = children
+            .find((node) => node.getAttribute("data-pane-id") === firstId)
+            ?.getBoundingClientRect();
+          const second = children
+            .find((node) => node.getAttribute("data-pane-id") === secondId)
+            ?.getBoundingClientRect();
+          if (!first || !second) return null;
+          const sorted = [first, second].sort((a, b) =>
+            axis === "horizontal" ? a.x - b.x : a.y - b.y,
+          );
+          const left = sorted[0]!;
+          const right = sorted[1]!;
+          return (
+            children
+              .filter((node) => node.matches(`.dock-divider.${axis}`))
+              .find((node) => {
+                const rect = node.getBoundingClientRect();
+                return axis === "horizontal"
+                  ? rect.x >= left.x + left.width - 2 &&
+                      rect.right <= right.x + 2 &&
+                      Math.abs(rect.y - left.y) < 2
+                  : rect.y >= left.y + left.height - 2 &&
+                      rect.bottom <= right.y + 2 &&
+                      Math.abs(rect.x - left.x) < 2;
+              })
+              ?.getAttribute("data-divider-id") ?? null
+          );
+        },
+        { firstId, secondId, axis },
+      );
+      return id;
+    })
+    .toBeTruthy();
+  return board.locator(`[data-divider-id="${id}"]`);
 }
 
 test("one workspace docks direct live sources and sidebar panes without restarting captures", async () => {
