@@ -208,7 +208,9 @@ export function measureDock(
     // Each pane has its own scroller; the global Stop control stays outside.
     const enough = available >= minA + minB;
     const minRatio = enough ? minA / available : minA / (minA + minB);
-    const maxRatio = enough ? 1 - minB / available : minRatio;
+    const maxRatio = enough
+      ? Math.max(minRatio, 1 - minB / available)
+      : minRatio;
     const ratio = Math.max(minRatio, Math.min(maxRatio, node.ratio));
     const firstLength = Math.max(
       0,
@@ -248,25 +250,25 @@ export const MAIN_DOCK_TREE: DockNode = {
   ratio: 0.68,
   first: {
     kind: "split",
-    id: "main-feeds",
+    id: "main-lower",
     axis: "vertical",
-    ratio: 0.86,
-    first: { kind: "pane", id: "workspace" },
-    second: { kind: "pane", id: "cameras" },
+    ratio: 0.7,
+    first: {
+      kind: "split",
+      id: "main-feeds",
+      axis: "vertical",
+      ratio: 0.86,
+      first: { kind: "pane", id: "workspace" },
+      second: { kind: "pane", id: "cameras" },
+    },
+    second: { kind: "pane", id: "extra" },
   },
   second: {
     kind: "split",
     id: "main-assistant",
     axis: "vertical",
-    ratio: 0.63,
+    ratio: 0.75,
     first: { kind: "pane", id: "assistant" },
-    second: {
-      kind: "split",
-      id: "main-activity",
-      axis: "vertical",
-      ratio: 0.3,
-      first: { kind: "pane", id: "actions" },
-      second: { kind: "pane", id: "activity" },
-    },
+    second: { kind: "pane", id: "activity" },
   },
 };

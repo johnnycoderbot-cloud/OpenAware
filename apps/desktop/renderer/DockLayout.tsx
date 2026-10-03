@@ -46,6 +46,11 @@ type LayoutProps = {
   minimums?: Record<string, PaneMinimum>;
   resetKey?: number | string;
   onDock?: (tree: DockNode) => void;
+  fitDefaultTree?: (
+    tree: DockNode,
+    size: { width: number; height: number },
+    minimums?: Record<string, PaneMinimum>,
+  ) => DockNode;
   className?: string;
 };
 
@@ -56,6 +61,7 @@ export function DockLayout({
   minimums,
   resetKey = 0,
   onDock,
+  fitDefaultTree,
   className = "",
 }: LayoutProps) {
   const panes = Children.toArray(children) as ReactElement<DockPaneProps>[];
@@ -63,6 +69,7 @@ export function DockLayout({
   const idKey = ids.join("\u0000");
   const boardRef = useRef<HTMLDivElement>(null);
   const [tree, setTree] = useState(defaultTree);
+  const [customized, setCustomized] = useState(false);
   const [size, setSize] = useState({ width: 0, height: 0 });
   const [dragging, setDragging] = useState<string>();
   const [target, setTarget] = useState<{ id: string; side: DockSide }>();
@@ -95,6 +102,7 @@ export function DockLayout({
     if (resetKey === resetRef.current) return;
     resetRef.current = resetKey;
     setTree(defaultTree);
+    setCustomized(false);
   }, [resetKey, defaultTree]);
   useEffect(() => {
     const board = boardRef.current;
@@ -109,16 +117,32 @@ export function DockLayout({
     observer.observe(board);
     return () => observer.disconnect();
   }, []);
+  // Fit the default to the available video dimensions until the user moves or
+  // resizes a pane. Their arrangement then owns the ratios until Reset layout.
+  const visibleTree = useMemo(
+    () =>
+      !customized && !compactMain && fitDefaultTree
+        ? fitDefaultTree(tree, size, minimums)
+        : tree,
+    [tree, size, minimums, customized, compactMain, fitDefaultTree],
+  );
   const geometry = useMemo(
-    () => measureDock(tree, { x: 0, y: 0, ...size }, minimums),
-    [tree, size, minimums],
+    () => measureDock(visibleTree, { x: 0, y: 0, ...size }, minimums),
+    [visibleTree, size, minimums],
   );
   const clearDrag = () => {
     setDragging(undefined);
     setTarget(undefined);
   };
   const move = (moving: string, destination: string, side: DockSide) => {
-    const next = dockPane(tree, moving, destination, side, crypto.randomUUID());
+    const next = dockPane(
+      visibleTree,
+      moving,
+      destination,
+      side,
+      crypto.randomUUID(),
+    );
+    setCustomized(true);
     setTree(next);
     onDock?.(next);
     setAnnouncement(
@@ -126,8 +150,8 @@ export function DockLayout({
     );
     clearDrag();
   };
-  const order = paneIds(tree);
-  const minimum = minimumDock(tree, minimums);
+  const order = paneIds(visibleTree);
+  const minimum = minimumDock(visibleTree, minimums);
   return (
     <div className={`dock-layout ${className}`} data-layout-name={name}>
       <div className="dock-viewport">
@@ -346,9 +370,8 @@ export function DockLayout({
                   current.minRatio,
                   Math.min(current.maxRatio, offset / Math.max(1, available)),
                 );
-                setTree((previous) =>
-                  setSplitRatio(previous, current.id, ratio),
-                );
+                setCustomized(true);
+                setTree(setSplitRatio(visibleTree, current.id, ratio));
               }}
               onPointerUp={(event) => {
                 resizing.current = undefined;
@@ -373,9 +396,10 @@ export function DockLayout({
                 else if (event.key === "End") ratio = divider.maxRatio;
                 else return;
                 event.preventDefault();
-                setTree((previous) =>
+                setCustomized(true);
+                setTree(
                   setSplitRatio(
-                    previous,
+                    visibleTree,
                     divider.id,
                     Math.max(
                       divider.minRatio,

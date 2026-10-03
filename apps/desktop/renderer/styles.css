@@ -3990,17 +3990,17 @@ h2 {
 .dashboard-dock-layout .source-pane .source-tile {
   position: relative;
   height: 100%;
-  min-height: 180px;
+  min-height: 0;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) 32px;
   border: 0;
   border-radius: 0;
   background: transparent;
 }
 .dashboard-dock-layout .source-pane .source-preview {
   height: 100%;
-  min-height: 180px;
+  min-height: 0;
   aspect-ratio: auto;
   grid-row: 1;
   border: 0;
@@ -4017,24 +4017,30 @@ h2 {
 }
 .source-pane .preview-bottom {
   z-index: 2;
-  bottom: 34px;
+  bottom: 4px;
   padding: 4px 8px;
   font-size: 10px;
   background: transparent;
   text-shadow: 0 1px 3px #000;
 }
 .dashboard-dock-layout .source-pane .source-bottom {
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
+  position: relative;
   z-index: 4;
   grid-column: 1 / -1;
-  grid-row: 1;
+  grid-row: 2;
   height: 32px;
   padding: 0 8px;
   border: 0;
-  background: linear-gradient(transparent, #07131bee);
+  background: #101c27;
+}
+.dashboard-dock-layout .source-pane .source-bottom .icon-button {
+  width: 26px;
+  height: 26px;
+  min-width: 26px;
+  min-height: 26px;
+}
+.dashboard-dock-layout .source-pane .source-bottom button:focus-visible {
+  outline-offset: -2px;
 }
 .dashboard-dock-layout .source-pane .mask-warning {
   position: absolute;
@@ -4050,7 +4056,7 @@ h2 {
   background: #442f19f0;
 }
 .source-pane .source-tile:has(> .mask-warning) .preview-bottom {
-  bottom: 60px;
+  bottom: 28px;
 }
 .dashboard-dock-layout .chat-compose {
   border: 0;
@@ -4109,10 +4115,12 @@ h2 {
     > [data-pane-id="assistant"] {
     min-height: 320px;
   }
-  .dashboard-dock-layout
-    > .dock-viewport
-    > .dock-board
-    > [data-pane-id="actions"] {
-    min-height: 88px;
+  .dashboard-dock-layout .source-pane .source-tile {
+    height: auto;
+    grid-template-rows: auto 32px;
+  }
+  .dashboard-dock-layout .source-pane .source-preview {
+    height: auto;
+    aspect-ratio: var(--source-aspect, 1.7777778);
   }
 }

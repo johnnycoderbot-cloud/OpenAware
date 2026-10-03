@@ -252,6 +252,91 @@ async function fullyContained(control: Locator, region: string, label: string) {
     )
     .toEqual({ region: true, pane: true, viewport: true });
 }
+
+async function fittedSource(source: Locator) {
+  const inspect = () =>
+    source.evaluate((node) => {
+      const bounds = node.getBoundingClientRect();
+      const header = node
+        .querySelector(".dock-pane-handle")!
+        .getBoundingClientRect();
+      const preview = node
+        .querySelector(".source-preview")!
+        .getBoundingClientRect();
+      const footer = node
+        .querySelector(".source-bottom")!
+        .getBoundingClientRect();
+      const media = node.querySelector("video, canvas")!;
+      const nativeWidth =
+        media instanceof HTMLVideoElement
+          ? media.videoWidth
+          : (media as HTMLCanvasElement).width;
+      const nativeHeight =
+        media instanceof HTMLVideoElement
+          ? media.videoHeight
+          : (media as HTMLCanvasElement).height;
+      return {
+        width: preview.width,
+        height: preview.height,
+        nativeWidth,
+        nativeHeight,
+        headerHeight: header.height,
+        footerHeight: footer.height,
+        gapAbove: preview.top - header.bottom,
+        gapBelow: footer.top - preview.bottom,
+        unusedHeight:
+          bounds.height - header.height - preview.height - footer.height,
+      };
+    });
+  await expect
+    .poll(
+      async () => {
+        const dimensions = await inspect();
+        return (
+          dimensions.nativeWidth > 0 &&
+          dimensions.nativeHeight > 0 &&
+          Math.abs(dimensions.height - (dimensions.width * 9) / 16) <= 2
+        );
+      },
+      { message: "Default preview must settle at its native16:9 aspect" },
+    )
+    .toBe(true);
+  const dimensions = await inspect();
+  expect(dimensions.nativeWidth).toBeGreaterThan(0);
+  expect(dimensions.nativeHeight).toBeGreaterThan(0);
+  expect(
+    Math.abs(dimensions.nativeWidth / dimensions.nativeHeight - 16 / 9),
+  ).toBeLessThan(0.01);
+  expect(
+    Math.abs(dimensions.height - (dimensions.width * 9) / 16),
+  ).toBeLessThanOrEqual(2);
+  expect(Math.abs(dimensions.headerHeight - 40)).toBeLessThanOrEqual(1);
+  expect(Math.abs(dimensions.footerHeight - 32)).toBeLessThanOrEqual(1);
+  expect(dimensions.gapAbove).toBeGreaterThanOrEqual(-1);
+  expect(dimensions.gapAbove).toBeLessThanOrEqual(2);
+  expect(dimensions.gapBelow).toBeGreaterThanOrEqual(-1);
+  expect(dimensions.gapBelow).toBeLessThanOrEqual(2);
+  expect(dimensions.unusedHeight).toBeGreaterThanOrEqual(0);
+  expect(dimensions.unusedHeight).toBeLessThanOrEqual(4);
+}
+
+async function extraBelowSources(page: Page, ids: string[]) {
+  const extra = pane(page, "extra");
+  await expect(
+    page.getByRole("heading", { name: "New pane", exact: true }),
+  ).toHaveCount(1);
+  await expect
+    .poll(async () => {
+      const extraRect = (await extra.boundingBox())!;
+      const sourceRects = await Promise.all(
+        ids.map((id) => pane(page, id).boundingBox()),
+      );
+      return sourceRects.every(
+        (rect) => !!rect && extraRect.y >= rect.y + rect.height,
+      );
+    })
+    .toBe(true);
+}
 async function pairPosition(
   a: Locator,
   b: Locator,
@@ -381,6 +466,11 @@ test("one workspace docks direct live sources and sidebar panes without restarti
       dashboard.locator(":scope > .dock-pane.source-pane"),
     ).toHaveCount(4);
     await expect(dashboard.locator(":scope > .dock-pane")).toHaveCount(7);
+    await expect(dashboard.locator('[data-pane-id="actions"]')).toHaveCount(0);
+    await expect(
+      page.getByRole("heading", { name: "Computer actions", exact: true }),
+    ).toHaveCount(0);
+    await extraBelowSources(page, ids);
     await expect(
       page.locator(
         ".feed-layout, .feed-height-resizer, .session-strip, .dock-layout-tools",
@@ -481,27 +571,22 @@ test("one workspace docks direct live sources and sidebar panes without restarti
               return {
                 noHorizontalScroll:
                   scroller.scrollWidth <= scroller.clientWidth + 1,
-                insideScroller:
+                widthInsideScroller:
                   rect.left >= bounds.left - 0.5 &&
-                  rect.right <= bounds.right + 0.5 &&
-                  rect.top >= bounds.top - 0.5 &&
-                  rect.bottom <= bounds.bottom + 0.5,
-                insideViewport:
-                  rect.left >= 0 &&
-                  rect.right <= innerWidth + 0.5 &&
-                  rect.top >= 0 &&
-                  rect.bottom <= innerHeight + 0.5,
+                  rect.right <= bounds.right + 0.5,
+                widthInsideViewport:
+                  rect.left >= 0 && rect.right <= innerWidth + 0.5,
               };
             }),
           {
             message:
-              "The default board must fit its viewport without horizontal scrolling",
+              "The fitted default board must fit the viewport width without horizontal scrolling",
           },
         )
         .toEqual({
           noHorizontalScroll: true,
-          insideScroller: true,
-          insideViewport: true,
+          widthInsideScroller: true,
+          widthInsideViewport: true,
         });
       await fullyContained(
         assistantPane.getByRole("button", {
@@ -540,7 +625,8 @@ test("one workspace docks direct live sources and sidebar panes without restarti
           .locator(".source-preview")
           .boundingBox())!;
         expect(preview.width).toBeGreaterThanOrEqual(258);
-        expect(preview.height).toBeGreaterThanOrEqual(180);
+        expect(preview.height).toBeGreaterThanOrEqual(144);
+        await fittedSource(source);
         await reachable(
           source.getByRole("button", { name: "Disconnect", exact: true }),
         );
@@ -558,7 +644,7 @@ test("one workspace docks direct live sources and sidebar panes without restarti
       );
       await reachable(page.locator(".conversation-panel textarea"));
       await reachable(
-        page.getByRole("button", { name: "Open Operator", exact: true }),
+        page.getByRole("button", { name: "Operator", exact: true }),
       );
       await page.evaluate(() => {
         for (const node of document.querySelectorAll(
@@ -633,7 +719,37 @@ test("one workspace docks direct live sources and sidebar panes without restarti
         .poll(() => pairPosition(firstPane, secondPane, "right"))
         .toBe(true);
       await assertContinuity();
+      await extraBelowSources(page, ids);
     };
+
+    const extraPane = pane(page, "extra");
+    const extraDivider = await dividerBetween(
+      page,
+      cameraPane,
+      extraPane,
+      "vertical",
+    );
+    const extraHeight = (await extraPane.boundingBox())!.height;
+    const beforeExtraResize = await frames(page);
+    await extraDivider.focus();
+    await extraDivider.press("ArrowUp");
+    await expect
+      .poll(async () => (await extraPane.boundingBox())!.height)
+      .toBeGreaterThan(extraHeight);
+    await framesAdvance(page, beforeExtraResize);
+    expect((await extraPane.boundingBox())!.height).toBeGreaterThan(
+      extraHeight,
+    );
+    await assertContinuity();
+    await reset();
+    await page
+      .getByRole("combobox", { name: "Arrange New pane", exact: true })
+      .selectOption(`${firstId}/top`);
+    await expect
+      .poll(() => pairPosition(firstPane, extraPane, "top"))
+      .toBe(true);
+    await assertContinuity();
+    await reset();
 
     // Pointer drag and keyboard separators manipulate source peers on one board.
     let firstBounds = (await firstPane.boundingBox())!;
@@ -656,11 +772,14 @@ test("one workspace docks direct live sources and sidebar panes without restarti
       "horizontal",
     );
     const sourceWidth = (await firstPane.boundingBox())!.width;
+    const beforeSourceResize = await frames(page);
     await sourceDivider.focus();
     await sourceDivider.press("ArrowRight");
     await expect
       .poll(async () => (await firstPane.boundingBox())!.width)
       .toBeLessThan(sourceWidth);
+    await framesAdvance(page, beforeSourceResize);
+    expect((await firstPane.boundingBox())!.width).toBeLessThan(sourceWidth);
     await assertContinuity();
     await page
       .getByRole("combobox", {
@@ -671,6 +790,22 @@ test("one workspace docks direct live sources and sidebar panes without restarti
     await expect
       .poll(() => pairPosition(firstPane, secondPane, "bottom"))
       .toBe(true);
+    // Stacking initially reaches both panes' minimum height. Give their group
+    // space, then prove its internal vertical divider can actually move.
+    const heightAtMinimum = (await firstPane.boundingBox())!.height;
+    await viewport(app, page, 1440, 1200);
+    const sourceGroupDivider = await dividerBetween(
+      page,
+      secondPane,
+      cameraPane,
+      "vertical",
+    );
+    await sourceGroupDivider.focus();
+    await sourceGroupDivider.press("End");
+    await expect
+      .poll(async () => (await firstPane.boundingBox())!.height)
+      .toBeGreaterThan(heightAtMinimum);
+    await assertContinuity();
     const verticalSourceDivider = await dividerBetween(
       page,
       firstPane,
@@ -678,12 +813,16 @@ test("one workspace docks direct live sources and sidebar panes without restarti
       "vertical",
     );
     const sourceHeight = (await firstPane.boundingBox())!.height;
+    const beforeVerticalResize = await frames(page);
     await verticalSourceDivider.focus();
     await verticalSourceDivider.press("ArrowUp");
     await expect
       .poll(async () => (await firstPane.boundingBox())!.height)
       .toBeLessThan(sourceHeight);
+    await framesAdvance(page, beforeVerticalResize);
+    expect((await firstPane.boundingBox())!.height).toBeLessThan(sourceHeight);
     await assertContinuity();
+    await viewport(app, page, 1440, 960);
     await reset();
     await page
       .getByRole("combobox", {
@@ -792,7 +931,7 @@ test("one workspace docks direct live sources and sidebar panes without restarti
     for (const source of [first, second, camera, virtual]) {
       expect(
         (await source.locator(".source-preview").boundingBox())!.height,
-      ).toBeGreaterThanOrEqual(180);
+      ).toBeGreaterThanOrEqual(144);
       await reachable(
         source.getByRole("button", { name: "Disconnect", exact: true }),
       );
@@ -848,17 +987,36 @@ test("four generated displays start in readable 2x2 panes and can scroll as one 
   try {
     await viewport(app, page, 1024, 720);
     const ids: string[] = [];
-    for (let i = 0; i < 4; i++)
+    let extraAfterTwo: { y: number; height: number } | undefined;
+    for (let i = 0; i < 4; i++) {
       ids.push(await addFixture(page, "demo", `Synthetic display ${i + 1}`));
+      if (i === 1) {
+        await fittedSource(tile(page, ids[0]!));
+        extraAfterTwo = (await pane(page, "extra").boundingBox())!;
+      }
+    }
     const dashboard = page.getByTestId("dashboard-dock-board");
     await expect(page.locator(".dock-board")).toHaveCount(1);
     await expect(dashboard.locator(":scope > .source-pane")).toHaveCount(4);
+    await expect(dashboard.locator(":scope > .dock-pane")).toHaveCount(7);
+    await expect(dashboard.locator('[data-pane-id="actions"]')).toHaveCount(0);
     await expect(dashboard.locator(".dock-board")).toHaveCount(0);
     await expect(
       page.locator(
         ".camera-empty, [data-pane-id='cameras'], .feed-layout, .source-title",
       ),
     ).toHaveCount(0);
+    await extraBelowSources(page, ids);
+    // Additional monitors occupy the former empty lower area; only the unused
+    // remainder stays available as New pane beneath the fitted source rows.
+    await expect
+      .poll(async () => {
+        const extra = (await pane(page, "extra").boundingBox())!;
+        return (
+          extra.y > extraAfterTwo!.y && extra.height < extraAfterTwo!.height
+        );
+      })
+      .toBe(true);
     await expect
       .poll(() =>
         pairPosition(pane(page, ids[0]!), pane(page, ids[1]!), "right"),
@@ -877,7 +1035,8 @@ test("four generated displays start in readable 2x2 panes and can scroll as one 
       const source = tile(page, id);
       const preview = (await source.locator(".source-preview").boundingBox())!;
       expect(preview.width).toBeGreaterThanOrEqual(258);
-      expect(preview.height).toBeGreaterThanOrEqual(180);
+      expect(preview.height).toBeGreaterThanOrEqual(144);
+      await fittedSource(source);
       await reachable(
         source.getByRole("button", { name: "Disconnect", exact: true }),
       );

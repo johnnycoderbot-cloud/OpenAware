@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
 import {
   Activity,
   Aperture,
@@ -46,7 +53,11 @@ import {
 } from "@openaware/contracts";
 import { CaptureManager, createProbe } from "./capture";
 import { DockLayout, DockPane } from "./DockLayout";
-import { buildWorkspaceLayout } from "./workspace-layout";
+import {
+  buildWorkspaceLayout,
+  fitWorkspaceLayout,
+  sourceAspectRatio,
+} from "./workspace-layout";
 
 declare global {
   interface Window {
@@ -489,16 +500,19 @@ export function App() {
                 name="dashboard"
                 className="dashboard-dock-layout"
                 defaultTree={workspaceTree}
+                fitDefaultTree={(tree, size, minimums) =>
+                  fitWorkspaceLayout(tree, snapshot.sources, size, minimums)
+                }
                 resetKey={`${layoutResetRevision}/${sourceMembership}`}
                 minimums={{
                   workspace: { width: 320, height: 200 },
                   assistant: { width: 300, height: 240 },
-                  actions: { width: 260, height: 88 },
                   activity: { width: 260, height: 100 },
+                  extra: { width: 260, height: 100 },
                   ...Object.fromEntries(
                     snapshot.sources.map((source) => [
                       source.id,
-                      { width: 260, height: 260 },
+                      { width: 260, height: 200 },
                     ]),
                   ),
                 }}
@@ -565,6 +579,9 @@ export function App() {
                     </DockPane>
                   );
                 })}
+                <DockPane id="extra" title="New pane">
+                  {null}
+                </DockPane>
                 <DockPane
                   id="assistant"
                   title="Workspace assistant"
@@ -586,31 +603,6 @@ export function App() {
                     run={run}
                     pending={pending}
                   />
-                </DockPane>
-                <DockPane
-                  id="actions"
-                  title="Computer actions"
-                  icon={<Settings2 size={17} />}
-                >
-                  <section
-                    className="panel operator-summary"
-                    aria-label="Computer actions"
-                  >
-                    {snapshot.pendingPlan && (
-                      <p className="pending-plan-note">
-                        {snapshot.pendingPlan.steps.length} steps to review
-                      </p>
-                    )}
-                    <div className="operator-summary-actions">
-                      <button
-                        className="button primary"
-                        onClick={() => setTab("Operator")}
-                      >
-                        <MousePointer2 size={16} />
-                        {snapshot.pendingPlan ? "Review plan" : "Open Operator"}
-                      </button>
-                    </div>
-                  </section>
                 </DockPane>
                 <DockPane
                   id="activity"
@@ -931,6 +923,7 @@ function SourceTile({
       data-source-id={source.id}
       data-presentation={presentation}
       className={`source-tile ${presentation} ${presentation !== "camera" ? "desktop-feed" : ""}`}
+      style={{ "--source-aspect": sourceAspectRatio(source) } as CSSProperties}
     >
       {!embedded && (
         <div className="source-title">

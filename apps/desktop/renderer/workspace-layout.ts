@@ -1,10 +1,47 @@
-import { MAIN_DOCK_TREE, buildPaneTree, type DockNode } from "./dock-layout";
+import {
+  DOCK_GAP,
+  MAIN_DOCK_TREE,
+  buildPaneTree,
+  measureDock,
+  minimumDock,
+  type DockNode,
+  type DockRect,
+  type PaneMinimum,
+} from "./dock-layout";
+
+type WorkspaceSource = {
+  id: string;
+  kind: string;
+  width?: number;
+  height?: number;
+};
+
+const DEFAULT_SOURCE_ASPECT = 16 / 9;
+const SOURCE_CHROME_HEIGHT = 74;
+
+export function sourceAspectRatio(source: {
+  width?: number;
+  height?: number;
+}): number {
+  const { width, height } = source;
+  if (
+    width === undefined ||
+    height === undefined ||
+    !Number.isFinite(width) ||
+    !Number.isFinite(height) ||
+    width <= 0 ||
+    height <= 0
+  )
+    return DEFAULT_SOURCE_ASPECT;
+  const ratio = width / height;
+  return Number.isFinite(ratio) && ratio > 0 ? ratio : DEFAULT_SOURCE_ASPECT;
+}
 
 /** Every source and tool is a leaf in the same dashboard, with no feed boards. */
 export function buildWorkspaceLayout(
   sources: { id: string; kind: string }[],
 ): DockNode {
-  const staticIds = ["workspace", "assistant", "actions", "activity"];
+  const staticIds = ["workspace", "extra", "assistant", "activity"];
   const sourceIds = sources.map((source) => source.id);
   if (new Set(sourceIds).size !== sourceIds.length)
     throw new Error("Workspace source IDs must be unique");
@@ -92,7 +129,112 @@ export function buildWorkspaceLayout(
     id: "main-columns",
     axis: "horizontal",
     ratio: 0.68,
-    first: workspace,
+    first: {
+      kind: "split",
+      id: uniqueSplitId("main-lower"),
+      axis: "vertical",
+      ratio: 0.7,
+      first: workspace,
+      second: { kind: "pane", id: "extra" },
+    },
     second: reserveSplits(MAIN_DOCK_TREE.second),
   };
+}
+
+/** Fit only an untouched default; docking remains the caller's authority. */
+export function fitWorkspaceLayout(
+  tree: DockNode,
+  sources: WorkspaceSource[],
+  size: { width: number; height: number },
+  minimums: Record<string, PaneMinimum> = {},
+): DockNode {
+  if (
+    !Number.isFinite(size.width) ||
+    !Number.isFinite(size.height) ||
+    size.width <= 0 ||
+    size.height <= 0
+  )
+    return tree;
+
+  const bounds: DockRect = { x: 0, y: 0, ...size };
+  const sourceMap = new Map(sources.map((source) => [source.id, source]));
+  const measured = measureDock(tree, bounds, minimums);
+  const preferredHeight = (node: DockNode): number | undefined => {
+    if (node.kind === "pane") {
+      const source = sourceMap.get(node.id);
+      const rect = measured.panes[node.id];
+      if (!source || !rect) return undefined;
+      const videoWidth = Math.max(0, rect.width - 2);
+      const preferred =
+        videoWidth / sourceAspectRatio(source) + SOURCE_CHROME_HEIGHT;
+      return Math.max(
+        minimumDock(node, minimums).height,
+        Number.isFinite(preferred)
+          ? preferred
+          : videoWidth / DEFAULT_SOURCE_ASPECT + SOURCE_CHROME_HEIGHT,
+      );
+    }
+    const first = preferredHeight(node.first);
+    const second = preferredHeight(node.second);
+    if (first === undefined || second === undefined) return undefined;
+    return node.axis === "horizontal"
+      ? Math.max(first, second)
+      : first + second + DOCK_GAP;
+  };
+
+  const fit = (node: DockNode, rect: DockRect): DockNode => {
+    if (node.kind === "pane") return node;
+    let next = node;
+    if (node.axis === "vertical") {
+      const first = preferredHeight(node.first);
+      const second = preferredHeight(node.second);
+      const lowerPane =
+        node.second.kind === "pane" && node.second.id === "extra";
+      const available = Math.max(
+        0,
+        rect.height - Math.min(DOCK_GAP, rect.height),
+      );
+      if (
+        first !== undefined &&
+        available > 0 &&
+        (lowerPane || second !== undefined)
+      ) {
+        const minFirst = minimumDock(node.first, minimums).height;
+        const minSecond = minimumDock(node.second, minimums).height;
+        const enough = available >= minFirst + minSecond;
+        const minRatio = enough
+          ? minFirst / available
+          : minFirst / (minFirst + minSecond);
+        const maxRatio = enough
+          ? Math.max(minRatio, 1 - minSecond / available)
+          : minRatio;
+        const desiredRatio = lowerPane
+          ? first / available
+          : first / (first + second!);
+        const ratio = Math.max(minRatio, Math.min(maxRatio, desiredRatio));
+        if (ratio !== node.ratio) next = { ...node, ratio };
+      }
+    }
+    const divider = measureDock(next, rect, minimums).dividers[0]!;
+    const horizontal = next.axis === "horizontal";
+    const firstLength = horizontal ? divider.x - rect.x : divider.y - rect.y;
+    const gap = horizontal ? divider.width : divider.height;
+    const firstRect = {
+      ...rect,
+      [horizontal ? "width" : "height"]: firstLength,
+    };
+    const secondRect = {
+      ...rect,
+      [horizontal ? "x" : "y"]:
+        (horizontal ? rect.x : rect.y) + firstLength + gap,
+      [horizontal ? "width" : "height"]:
+        (horizontal ? rect.width : rect.height) - firstLength - gap,
+    };
+    const first = fit(next.first, firstRect);
+    const second = fit(next.second, secondRect);
+    return first === next.first && second === next.second
+      ? next
+      : { ...next, first, second };
+  };
+  return fit(tree, bounds);
 }

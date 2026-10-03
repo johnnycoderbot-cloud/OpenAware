@@ -18,12 +18,12 @@ import {
 } from "../apps/desktop/renderer/dock-layout";
 
 const sides: DockSide[] = ["left", "right", "top", "bottom"];
-const mainIds = ["workspace", "cameras", "assistant", "actions", "activity"];
+const mainIds = ["workspace", "cameras", "extra", "assistant", "activity"];
 const mainMinimums: Record<string, PaneMinimum> = {
   workspace: { width: 320, height: 200 },
   cameras: { width: 260, height: 110 },
+  extra: { width: 260, height: 100 },
   assistant: { width: 300, height: 240 },
-  actions: { width: 260, height: 120 },
   activity: { width: 260, height: 100 },
 };
 
@@ -82,7 +82,7 @@ function assertGeometry(tree: DockNode, bounds: DockRect, minimums = {}) {
   return measured;
 }
 
-test("main dashboard starts with all five pane identities exactly once", () => {
+test("main dashboard includes a lower pane and gives chat three quarters of the sidebar", () => {
   assertIds(MAIN_DOCK_TREE, mainIds);
   const result = assertGeometry(
     MAIN_DOCK_TREE,
@@ -90,6 +90,15 @@ test("main dashboard starts with all five pane identities exactly once", () => {
     mainMinimums,
   );
   assert.equal(result.dividers.length, 4);
+  assert.equal(result.panes.actions, undefined);
+  assert.equal(
+    result.panes.assistant!.height,
+    Math.round((900 - DOCK_GAP) * 0.75),
+  );
+  assert.equal(
+    result.panes.activity!.height,
+    900 - DOCK_GAP - result.panes.assistant!.height,
+  );
 });
 
 test("docking every dashboard pane on every side preserves identities and placement", () => {
@@ -376,7 +385,7 @@ test("a requested dock divider ID cannot collide with an existing pane or divide
     const tree = dockPane(
       MAIN_DOCK_TREE,
       "workspace",
-      "actions",
+      "activity",
       "right",
       requested,
     );
@@ -387,7 +396,7 @@ test("a requested dock divider ID cannot collide with an existing pane or divide
         node.kind === "split" &&
         paneIds(node).length === 2 &&
         paneIds(node).includes("workspace") &&
-        paneIds(node).includes("actions"),
+        paneIds(node).includes("activity"),
     );
     assert.ok(inserted && inserted.kind === "split");
     if (requested !== "camera-unused") assert.notEqual(inserted.id, requested);
@@ -396,7 +405,7 @@ test("a requested dock divider ID cannot collide with an existing pane or divide
     assert.ok(existing && existing.kind === "split");
     assert.equal(
       existing.ratio,
-      0.63,
+      0.75,
       "Only the new divider responds to its resize target",
     );
     assertIds(resized, mainIds);
@@ -418,7 +427,7 @@ test("split resizing changes the chosen divider and clamps extreme finite ratios
   );
   const retained = find(changed, "main-assistant");
   assert.ok(retained && retained.kind === "split");
-  assert.equal(retained.ratio, 0.63);
+  assert.equal(retained.ratio, 0.75);
   const lowTree = setSplitRatio(changed, "main-columns", -200);
   const lowSplit = find(lowTree, "main-columns");
   assert.ok(lowSplit && lowSplit.kind === "split");
@@ -453,6 +462,22 @@ test("minimum dimensions constrain resizing when there is enough available space
       assert.ok(panes.b!.width >= 200 && panes.b!.height >= 180);
     }
   }
+});
+
+test("exact pane minima keep divider bounds ordered despite floating point rounding", () => {
+  const tree = buildPaneTree(["assistant", "extra"], "vertical", "exact");
+  const minimums = {
+    assistant: { width: 300, height: 240 },
+    extra: { width: 260, height: 100 },
+  };
+  const { panes, dividers } = assertGeometry(
+    tree,
+    { x: 0, y: 0, width: 600, height: 240 + 100 + DOCK_GAP },
+    minimums,
+  );
+  assert.equal(panes.assistant!.height, 240);
+  assert.equal(panes.extra!.height, 100);
+  assert.equal(dividers[0]!.minRatio, dividers[0]!.maxRatio);
 });
 
 test("tiny and fractional viewports retain finite nonnegative geometry inside the container", () => {

@@ -1,6 +1,6 @@
 # Background monitoring with tray controls
 
-OpenAware v0.2.3 retains the background controls introduced in v0.2: it can hide its dashboard while the currently configured capture and awareness session continues. In this release, headless means a hidden dashboard with a system tray in the same interactive Windows desktop session. Sources and native permissions remain attached to that session.
+OpenAware v0.2.4 retains the background controls introduced in v0.2: it can hide its dashboard while the currently configured capture and awareness session continues. In this release, headless means a hidden dashboard with a system tray in the same interactive Windows desktop session. Sources and native permissions remain attached to that session.
 
 ## Configure, then hide
 
@@ -12,7 +12,7 @@ OpenAware v0.2.3 retains the background controls introduced in v0.2: it can hide
 
 Entering background mode does not start monitoring, select another source or model, or grant computer-action permission. Operator steps still require the same native review and approval for every step.
 
-The dashboard is one workspace with each source, chat, actions and activity view in an independent pane. Two monitor panes default to side by side; three or four desktop panes use two-column rows, with cameras below. Drag handles, Arrange icon menus and dividers change the layout. Global Reset, source-list changes and returning to Overview restore defaults. Hiding or showing the existing dashboard preserves its layout and live connections. These layout controls do not expand the four-source limit or change capture/model permissions.
+The dashboard is one workspace with each source, chat, activity and empty New pane view in an independent pane. Two monitor panes default to side by side; three or four desktop panes use two-column rows, with cameras below. Default feed heights fit video proportions. Additional monitor rows grow into the lower space; New pane retains the unused remainder below the feed group. The assistant/activity sidebar uses a 75%/25% split. Operator is a separate page in the top navigation. Drag handles, Arrange icon menus and dividers change the layout. Global Reset, source-list changes and returning to Overview restore defaults. Hiding or showing the existing dashboard preserves its layout and live connections. These layout controls do not expand the four-source limit or change capture/model permissions, and New pane has no additional content tools yet.
 
 ## Controls and window behavior
 
@@ -59,3 +59,5 @@ Production background mode requires an available system tray. If tray creation f
 Synthetic Electron tests verify continued frame acquisition and mock inference while hidden, Show and close behavior, idle headless startup, and process termination after Quit. A production tray test verifies the real menu and its installed callbacks. Version 0.2.1 adds a controlled two-window regression for real display acquisition; results are recorded in its ledger. Personal monitor and mixed-DPI capture, real cameras/models, physical tray clicks, and native input effects still require acceptance evidence. See [prototype status](prototype.md), the [v0.2.1 implementation ledger](../.omx/logs/implementation-v0.2.1.md), and the historical [v0.2 ledger](../.omx/logs/implementation-v0.2.md).
 
 Version 0.2.1 uses a transparent blue OpenAware eye/O icon in the Windows tray, with a tooltip naming OpenAware and its capture state. If Windows places it in the overflow, open the taskbar **^**, find the blue eye, and right-click **Show OpenAware** or double-click the icon.
+
+Current Overview and release verification status is recorded in the [v0.2.4 implementation ledger](../.omx/logs/implementation-v0.2.4.md). The [v0.2.3 implementation ledger](../.omx/logs/implementation-v0.2.3.md) preserves the earlier flat-workspace checks.

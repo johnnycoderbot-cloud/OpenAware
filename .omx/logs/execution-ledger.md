@@ -27,3 +27,5 @@ The selected-monitor permission and recognizable tray-icon correction is tracked
 The lower-feed visibility and all-main-pane docking request is tracked in the [v0.2.2 implementation ledger](implementation-v0.2.2.md).
 
 The owner's single-workspace and side-by-side default follow-up is tracked in the [v0.2.3 implementation ledger](implementation-v0.2.3.md).
+
+The owner's redundant-action-pane removal, video-proportioned monitor sizing and movable lower New pane follow-up is tracked in the [v0.2.4 implementation ledger](implementation-v0.2.4.md). The owner chose an empty pane for future content; added monitor rows use that area while the empty pane retains the remainder. Local checks, independent review and manual two-monitor acceptance are complete; public delivery follows the exact-commit gates recorded there.
