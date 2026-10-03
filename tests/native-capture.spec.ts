@@ -153,11 +153,20 @@ test("isolated native owners capture two exact fixture windows and Stop releases
     }
 
     await expect(page.getByTestId("source-tile")).toHaveCount(2);
-    const framesBeforeFocus = await page.evaluate(async () =>
-      (await window.openAware!.invoke({ type: "state.get" })).sources.map(
-        (source) => source.lastFrameAt || 0,
-      ),
-    );
+    const framesBeforeFocus = await page.evaluate(async () => {
+      const state = await window.openAware!.invoke({ type: "state.get" });
+      const receipts = (
+        window as unknown as {
+          nativePreviewReceipts: Record<string, PreviewReceipt>;
+        }
+      ).nativePreviewReceipts;
+      return Object.fromEntries(
+        state.sources.map((source) => [
+          source.id,
+          { sampledAt: source.lastFrameAt || 0, receipt: receipts[source.id]! },
+        ]),
+      );
+    });
     // Adding B makes it primary. Use the visible source Focus buttons so the
     // native regression also exercises compact windows, where the dropdown
     // is intentionally hidden. Each focus change exposes the other button.
@@ -174,17 +183,50 @@ test("isolated native owners capture two exact fixture windows and Stop releases
       })
       .click();
     await expect
-      .poll(() =>
-        page.evaluate(async (previous) => {
-          const state = await window.openAware!.invoke({ type: "state.get" });
-          return state.sources.every(
-            (source, index) =>
-              source.status === "live" &&
-              (source.lastFrameAt || 0) > previous[index]!,
-          );
-        }, framesBeforeFocus),
+      .poll(
+        () =>
+          page.evaluate(async (previous) => {
+            const state = await window.openAware!.invoke({ type: "state.get" });
+            const receipts = (
+              window as unknown as {
+                nativePreviewReceipts: Record<string, PreviewReceipt>;
+              }
+            ).nativePreviewReceipts;
+            return Object.entries(previous).map(([sourceId, baseline]) => {
+              const source = state.sources.find((item) => item.id === sourceId);
+              const receipt = receipts[sourceId];
+              return {
+                sourceId,
+                status: source?.status,
+                error: source?.error || "",
+                sampledAt: source?.lastFrameAt,
+                receipt,
+                sampledFrameAdvanced:
+                  (source?.lastFrameAt || 0) > baseline.sampledAt,
+                nativeFrameAdvanced:
+                  (receipt?.capturedAt || 0) > baseline.receipt.capturedAt,
+                nativeSequenceAdvanced:
+                  (receipt?.sequence || 0) > baseline.receipt.sequence,
+                nativeCountAdvanced:
+                  (receipt?.count || 0) > baseline.receipt.count,
+              };
+            });
+          }, framesBeforeFocus),
+        // Masked service samples are throttled to two seconds. Native preview
+        // receipts must also advance; a fresh timer cannot satisfy this check.
+        { timeout: 10_000 },
       )
-      .toBe(true);
+      .toMatchObject(
+        sourceIds.map((sourceId) => ({
+          sourceId,
+          status: "live",
+          error: "",
+          sampledFrameAdvanced: true,
+          nativeFrameAdvanced: true,
+          nativeSequenceAdvanced: true,
+          nativeCountAdvanced: true,
+        })),
+      );
 
     const nativeVideos = await app.evaluate(async ({ BrowserWindow }) => {
       const owners = BrowserWindow.getAllWindows().filter(
@@ -244,10 +286,10 @@ test("isolated native owners capture two exact fixture windows and Stop releases
         ),
       ),
     ).toBe(false);
-    for (const [index, name] of fixtureNames.entries()) {
-      const tile = page.getByTestId("source-tile").filter({
-        has: page.getByRole("heading", { name, exact: true }),
-      });
+    for (const [index] of fixtureNames.entries()) {
+      const tile = page.locator(
+        `[data-testid="source-tile"][data-source-id="${sourceIds[index]!}"]`,
+      );
       await expect(tile.locator("canvas")).toBeVisible();
       const pixel = await tile.locator("canvas").evaluate((canvas) => {
         const preview = canvas as HTMLCanvasElement;

@@ -45,6 +45,8 @@ import {
   type SourceKind,
 } from "@openaware/contracts";
 import { CaptureManager, createProbe } from "./capture";
+import { DockLayout, DockPane, FeedLayout } from "./DockLayout";
+import { MAIN_DOCK_TREE } from "./dock-layout";
 
 declare global {
   interface Window {
@@ -76,6 +78,7 @@ export function App() {
   const [addOpen, setAddOpen] = useState(false);
   const [maskSource, setMaskSource] = useState<Source>();
   const [focusedSourceId, setFocusedSourceId] = useState<string>();
+  const [layoutResetRevision, setLayoutResetRevision] = useState(0);
   const [desktopState, setDesktopState] = useState<DesktopState>();
   const feedsRef = useRef<HTMLDivElement>(null);
   const [notice, setNotice] = useState<string>();
@@ -241,14 +244,14 @@ export function App() {
 
   const renderSource = (
     source: Source,
-    presentation: "primary" | "thumbnail" | "camera",
+    presentation: "primary" | "secondary" | "camera",
   ) => (
     <SourceTile
       key={source.id}
       source={source}
       presentation={presentation}
       onFocus={
-        presentation === "thumbnail" ? () => focusSource(source.id) : undefined
+        presentation === "secondary" ? () => focusSource(source.id) : undefined
       }
       info={manager?.info(source.id)}
       pending={pending.includes(source.id)}
@@ -399,19 +402,6 @@ export function App() {
               </span>
             </div>
           )}
-          {tab === "Overview" &&
-            live.length > 0 &&
-            snapshot.binding.status !== "verified" &&
-            live.some((s) => s.analysisEnabled) && (
-              <div className="inline-notice">
-                <Eye size={18} />
-                <span>
-                  Verify a vision model in Connections to enable AI. For
-                  motion-only watching, turn off AI analysis and turn on Motion
-                  alerts for your sources.
-                </span>
-              </div>
-            )}
           {snapshot.lastError && (
             <div className="inline-notice error">
               <Activity size={18} />
@@ -434,9 +424,7 @@ export function App() {
                   }
                 >
                   <Cpu size={15} />
-                  <span>
-                    {snapshot.binding.modelId || "Choose a local model"}
-                  </span>
+                  <span>{snapshot.binding.modelId || "Connect model"}</span>
                   <span
                     className={`connection-state ${snapshot.binding.status === "verified" ? "verified" : ""}`}
                   >
@@ -451,178 +439,162 @@ export function App() {
                   AI evidence: {recent ? age(recent.capturedAt) : "not sampled"}
                 </span>
               </div>
-              <div className="overview-columns">
-                <div
-                  className={`feeds-section ${cameraSources.length ? "has-cameras" : ""}`}
-                  ref={feedsRef}
-                >
-                  <section
-                    className="panel desktop-panel"
-                    aria-label="Live desktop sources"
+              <DockLayout
+                name="dashboard"
+                className="dashboard-dock-layout"
+                defaultTree={MAIN_DOCK_TREE}
+                onReset={() => setLayoutResetRevision((value) => value + 1)}
+                minimums={{
+                  workspace: { width: 320, height: 200 },
+                  cameras: {
+                    width: 260,
+                    height: cameraSources.length ? 240 : 110,
+                  },
+                  assistant: { width: 300, height: 240 },
+                  actions: { width: 260, height: 88 },
+                  activity: { width: 260, height: 100 },
+                }}
+              >
+                <DockPane id="workspace" title="Live workspace">
+                  <div
+                    className={`feeds-section ${cameraSources.length ? "has-cameras" : ""}`}
+                    ref={feedsRef}
                   >
-                    <div className="feed-panel-heading">
-                      <Monitor size={23} />
-                      <div>
-                        <h1>Live workspace</h1>
-                        <p>Live desktop · Preview and AI run independently.</p>
+                    <section
+                      className={`panel desktop-panel ${screenSources.length > 1 ? "has-multiple-desktops" : ""}`}
+                      aria-label="Live desktop sources"
+                    >
+                      <div className="feed-panel-heading">
+                        {screenSources.length > 0 && (
+                          <select
+                            aria-label="Focused desktop source"
+                            value={primarySource?.id || ""}
+                            onChange={(e) => focusSource(e.target.value)}
+                          >
+                            {screenSources.map((source) => (
+                              <option key={source.id} value={source.id}>
+                                {source.name}
+                              </option>
+                            ))}
+                          </select>
+                        )}
+                        <div className="page-actions">
+                          <button
+                            data-testid="add-source"
+                            className="button secondary"
+                            disabled={!bridge || snapshot.sources.length >= 4}
+                            onClick={() => setAddOpen(true)}
+                          >
+                            <Plus size={16} />
+                            Add source
+                          </button>
+                          <button
+                            className="button primary"
+                            disabled={
+                              !bridge ||
+                              (!sessionActive && !canStart) ||
+                              pending.includes("monitor.start")
+                            }
+                            onClick={() =>
+                              void run({
+                                type: sessionActive
+                                  ? "monitor.pause"
+                                  : "monitor.start",
+                              })
+                            }
+                          >
+                            {sessionActive ? (
+                              <Pause size={15} />
+                            ) : (
+                              <Play size={15} />
+                            )}
+                            {sessionActive
+                              ? "Pause AI"
+                              : snapshot.session === "paused"
+                                ? "Resume watching"
+                                : "Start watching"}
+                          </button>
+                        </div>
                       </div>
-                      {screenSources.length > 0 && (
-                        <select
-                          aria-label="Focused desktop source"
-                          value={primarySource?.id || ""}
-                          onChange={(e) => focusSource(e.target.value)}
+                      {primarySource ? (
+                        <FeedLayout
+                          sources={screenSources}
+                          resetRevision={layoutResetRevision}
                         >
                           {screenSources.map((source) => (
-                            <option key={source.id} value={source.id}>
-                              {source.name}
-                            </option>
+                            <DockPane
+                              key={source.id}
+                              id={source.id}
+                              title={source.name}
+                              hideTitle
+                            >
+                              {renderSource(
+                                source,
+                                source.id === primarySource.id
+                                  ? "primary"
+                                  : "secondary",
+                              )}
+                            </DockPane>
                           ))}
-                        </select>
+                        </FeedLayout>
+                      ) : (
+                        <div className="desktop-empty">
+                          <Monitor size={28} />
+                          <span>No desktop sources</span>
+                        </div>
                       )}
-                      <div className="page-actions">
-                        <button
-                          data-testid="add-source"
-                          className="button secondary"
-                          disabled={!bridge || snapshot.sources.length >= 4}
-                          onClick={() => setAddOpen(true)}
-                        >
-                          <Plus size={16} />
-                          Add source
-                        </button>
-                        <button
-                          className="button primary"
-                          disabled={
-                            !bridge ||
-                            (!sessionActive && !canStart) ||
-                            pending.includes("monitor.start")
-                          }
-                          onClick={() =>
-                            void run({
-                              type: sessionActive
-                                ? "monitor.pause"
-                                : "monitor.start",
-                            })
-                          }
-                        >
-                          {sessionActive ? (
-                            <Pause size={15} />
-                          ) : (
-                            <Play size={15} />
-                          )}
-                          {sessionActive
-                            ? "Pause AI"
-                            : snapshot.session === "paused"
-                              ? "Resume watching"
-                              : "Start watching"}
-                        </button>
-                      </div>
-                    </div>
-                    {primarySource ? (
-                      renderSource(primarySource, "primary")
-                    ) : (
-                      <div className="desktop-empty">
-                        <Monitor size={40} />
-                        <h3>Bring your desktop into view</h3>
-                        <p>
-                          Select a monitor, window, or synthetic demo.
-                          <br />
-                          Capture starts only after you choose a source.
-                        </p>
-                        <button
-                          className="button primary"
-                          disabled={!bridge || snapshot.sources.length >= 4}
-                          onClick={() => setAddOpen(true)}
-                        >
-                          <Plus size={17} />
-                          Connect a source
-                        </button>
-                      </div>
-                    )}
-                    {screenSources.length > 1 && (
-                      <div
-                        className="desktop-switcher"
-                        aria-label="Other desktop sources"
-                      >
-                        {screenSources
-                          .filter((source) => source.id !== primarySource?.id)
-                          .map((source) => renderSource(source, "thumbnail"))}
-                      </div>
-                    )}
-                    <div className="capture-footnote">
-                      <ShieldCheck size={14} />
-                      <span>
-                        Masked before AI analysis · Stop all releases every
-                        feed.
-                      </span>
-                    </div>
-                  </section>
+                    </section>
+                  </div>
+                </DockPane>
+                <DockPane id="cameras" title="Camera feeds">
                   <section
                     className="panel camera-panel"
                     aria-label="Camera feeds"
                   >
-                    <div className="feed-panel-heading">
-                      <Camera size={22} />
-                      <div>
-                        <h2>
-                          Camera feeds{" "}
-                          <span className="count">{cameraSources.length}</span>
-                        </h2>
-                        <p>Live views from your selected cameras.</p>
-                      </div>
-                      <button
-                        className="text-button"
-                        disabled={!bridge || snapshot.sources.length >= 4}
-                        onClick={() => setAddOpen(true)}
-                      >
-                        <Plus size={16} />
-                        Add source
-                      </button>
-                    </div>
                     {cameraSources.length > 0 ? (
-                      <div className="camera-grid">
-                        {cameraSources.map((source) =>
-                          renderSource(source, "camera"),
-                        )}
-                      </div>
+                      <FeedLayout
+                        sources={cameraSources}
+                        category="camera"
+                        name="camera-feed"
+                        resetRevision={layoutResetRevision}
+                      >
+                        {cameraSources.map((source) => (
+                          <DockPane
+                            key={source.id}
+                            id={source.id}
+                            title={source.name}
+                            hideTitle
+                          >
+                            {renderSource(source, "camera")}
+                          </DockPane>
+                        ))}
+                      </FeedLayout>
                     ) : (
                       <div className="camera-empty">
                         <Camera size={23} />
-                        <span>
-                          No cameras connected. Add a webcam or OBS virtual
-                          camera.
-                        </span>
+                        <span>No cameras connected</span>
                       </div>
                     )}
                   </section>
-                </div>
-                <div className="awareness-column">
+                </DockPane>
+                <DockPane id="assistant" title="Workspace assistant">
                   <Conversation
                     snapshot={snapshot}
                     run={run}
                     pending={pending}
                   />
+                </DockPane>
+                <DockPane id="actions" title="Computer actions">
                   <section
                     className="panel operator-summary"
                     aria-label="Computer actions"
                   >
-                    <div className="summary-heading">
-                      <Settings2 size={23} />
-                      <div>
-                        <h2>Computer actions</h2>
-                        <p>The Operator proposes. You approve every step.</p>
-                      </div>
-                    </div>
                     {snapshot.pendingPlan && (
                       <p className="pending-plan-note">
-                        {snapshot.pendingPlan.steps.length} proposed steps are
-                        ready for review.
+                        {snapshot.pendingPlan.steps.length} steps to review
                       </p>
                     )}
                     <div className="operator-summary-actions">
-                      <span>
-                        <ShieldCheck size={14} />
-                        Ask before acting
-                      </span>
                       <button
                         className="button primary"
                         onClick={() => setTab("Operator")}
@@ -632,16 +604,13 @@ export function App() {
                       </button>
                     </div>
                   </section>
+                </DockPane>
+                <DockPane id="activity" title="Recent activity">
                   <section
                     className="panel overview-activity"
                     aria-label="Recent activity"
                   >
                     <div className="summary-heading">
-                      <Activity size={22} />
-                      <div>
-                        <h2>Recent activity</h2>
-                        <p>Observations, motion, and action results.</p>
-                      </div>
                       <button
                         className="text-button"
                         onClick={() => setTab("Event log")}
@@ -653,10 +622,7 @@ export function App() {
                       {snapshot.events.length === 0 ? (
                         <div className="empty-activity">
                           <Radio size={18} />
-                          <span>
-                            Events will appear when you connect a source or
-                            start watching.
-                          </span>
+                          <span>No events</span>
                         </div>
                       ) : (
                         snapshot.events
@@ -692,8 +658,8 @@ export function App() {
                       )}
                     </div>
                   </section>
-                </div>
-              </div>
+                </DockPane>
+              </DockLayout>
             </>
           )}
           {tab === "Connections" && (
@@ -870,7 +836,7 @@ function SourceTile({
   onToggle,
 }: {
   source: Source;
-  presentation: "primary" | "thumbnail" | "camera";
+  presentation: "primary" | "secondary" | "camera";
   onFocus?: () => void;
   info: ReturnType<CaptureManager["info"]>;
   observation?: Snapshot["observations"][number];
@@ -881,8 +847,30 @@ function SourceTile({
   onMasks: () => void;
   onToggle: (key: "analysisEnabled" | "motionEnabled", value: boolean) => void;
 }) {
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const articleRef = useRef<HTMLElement>(null);
+  const settingsTrigger = useRef<HTMLButtonElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  useEffect(() => {
+    if (!settingsOpen) return;
+    const outside = (event: PointerEvent) => {
+      if (!articleRef.current?.contains(event.target as Node))
+        setSettingsOpen(false);
+    };
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setSettingsOpen(false);
+        settingsTrigger.current?.focus();
+      }
+    };
+    window.addEventListener("pointerdown", outside);
+    window.addEventListener("keydown", escape);
+    return () => {
+      window.removeEventListener("pointerdown", outside);
+      window.removeEventListener("keydown", escape);
+    };
+  }, [settingsOpen]);
   useEffect(() => {
     const video = videoRef.current;
     if (video && info?.stream) {
@@ -923,8 +911,11 @@ function SourceTile({
     );
   return (
     <article
+      ref={articleRef}
       data-testid="source-tile"
-      className={`source-tile ${presentation}`}
+      data-source-id={source.id}
+      data-presentation={presentation}
+      className={`source-tile ${presentation} ${presentation !== "camera" ? "desktop-feed" : ""}`}
     >
       <div className="source-title">
         <div>
@@ -946,7 +937,7 @@ function SourceTile({
             className="icon-button focus-source"
             onClick={onFocus}
             aria-label={`Focus ${source.name}`}
-            title="Show in the large preview"
+            title="Focus this feed"
           >
             <ArrowUpRight size={17} />
           </button>
@@ -976,11 +967,9 @@ function SourceTile({
           </div>
         )}
         <div className="preview-top">
-          <span className="preview-label">
-            {source.kind === "demo"
-              ? "SYNTHETIC DEMO"
-              : source.kind.replace("_", " ").toUpperCase()}
-          </span>
+          {source.kind === "demo" && (
+            <span className="preview-label">SYNTHETIC DEMO</span>
+          )}
           {source.masks.length > 0 && (
             <span className="preview-label">
               <ShieldCheck size={11} />
@@ -999,44 +988,66 @@ function SourceTile({
         )}
       </div>
       {info?.blocked && (
-        <div className="mask-warning">
-          Dimensions changed. Review masks before enabling analysis.
+        <div className="mask-warning">Review masks after size change.</div>
+      )}
+      {settingsOpen && (
+        <div
+          className="source-settings"
+          role="group"
+          aria-label={`Source settings for ${source.name}`}
+          id={`settings-${source.id}`}
+        >
+          <label className="toggle-label">
+            <input
+              type="checkbox"
+              checked={source.analysisEnabled}
+              disabled={info?.blocked}
+              onChange={(e) => onToggle("analysisEnabled", e.target.checked)}
+            />
+            <span className="toggle" /> AI analysis
+          </label>
+          <label className="toggle-label">
+            <input
+              type="checkbox"
+              checked={source.motionEnabled}
+              disabled={info?.blocked}
+              onChange={(e) => onToggle("motionEnabled", e.target.checked)}
+            />
+            <span className="toggle" /> Motion alerts
+          </label>
+          <button
+            className="text-button"
+            aria-label={`Privacy masks for ${source.name}`}
+            title="Privacy masks"
+            onClick={() => {
+              setSettingsOpen(false);
+              onMasks();
+            }}
+          >
+            <ShieldCheck size={16} />
+            Privacy masks
+          </button>
         </div>
       )}
-      <div className="source-options">
-        <label className="toggle-label">
-          <input
-            type="checkbox"
-            checked={source.analysisEnabled}
-            disabled={info?.blocked}
-            onChange={(e) => onToggle("analysisEnabled", e.target.checked)}
-          />
-          <span className="toggle" /> AI analysis
-        </label>
-        <label className="toggle-label">
-          <input
-            type="checkbox"
-            checked={source.motionEnabled}
-            disabled={info?.blocked}
-            onChange={(e) => onToggle("motionEnabled", e.target.checked)}
-          />
-          <span className="toggle" /> Motion alerts
-        </label>
-        <button
-          className="icon-button"
-          aria-label={`Privacy masks for ${source.name}`}
-          title="Privacy masks"
-          onClick={onMasks}
-        >
-          <ShieldCheck size={16} />
-        </button>
-      </div>
       <div className="source-bottom">
-        <span>
+        <span
+          title={`AI evidence ${observation ? age(observation.capturedAt) : "not sampled"}`}
+        >
           <Eye size={13} />
-          AI {observation ? age(observation.capturedAt) : "not sampled"}
+          {observation ? age(observation.capturedAt) : "—"}
         </span>
         <div>
+          <button
+            ref={settingsTrigger}
+            className="icon-button"
+            aria-label={`Settings for ${source.name}`}
+            aria-expanded={settingsOpen}
+            aria-controls={`settings-${source.id}`}
+            title="Source settings"
+            onClick={() => setSettingsOpen((open) => !open)}
+          >
+            <Settings2 size={15} />
+          </button>
           <button
             className="text-button"
             disabled={pending}
@@ -1072,8 +1083,44 @@ function Conversation({
 }) {
   const [text, setText] = useState("");
   const [selected, setSelected] = useState<string[]>([]);
+  const [sourcesOpen, setSourcesOpen] = useState(false);
+  const [sourceMenuHeight, setSourceMenuHeight] = useState(155);
+  const composeRef = useRef<HTMLFormElement>(null);
+  const historyRef = useRef<HTMLDivElement>(null);
+  const sourcesTrigger = useRef<HTMLButtonElement>(null);
   const bottom = useRef<HTMLDivElement>(null);
   const knownSources = useRef<string[]>([]);
+  useEffect(() => {
+    const history = historyRef.current;
+    if (!history) return;
+    const resize = () =>
+      setSourceMenuHeight(
+        Math.max(28, Math.min(155, history.clientHeight + 5)),
+      );
+    resize();
+    const observer = new ResizeObserver(resize);
+    observer.observe(history);
+    return () => observer.disconnect();
+  }, []);
+  useEffect(() => {
+    if (!sourcesOpen) return;
+    const outside = (event: PointerEvent) => {
+      if (!composeRef.current?.contains(event.target as Node))
+        setSourcesOpen(false);
+    };
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setSourcesOpen(false);
+        sourcesTrigger.current?.focus();
+      }
+    };
+    window.addEventListener("pointerdown", outside);
+    window.addEventListener("keydown", escape);
+    return () => {
+      window.removeEventListener("pointerdown", outside);
+      window.removeEventListener("keydown", escape);
+    };
+  }, [sourcesOpen]);
   useEffect(() => {
     const live = snapshot.sources
       .filter((s) => s.status === "live")
@@ -1113,65 +1160,22 @@ function Conversation({
       className="panel conversation-panel"
       aria-label="Ask your workspace"
     >
-      <div className="conversation-heading">
-        <span className="assistant-symbol">
-          <Bot size={20} />
-        </span>
-        <div>
-          <h2>Workspace assistant</h2>
-          <p>Ask about what is in view</p>
-        </div>
-        <span className="small-badge">OBSERVER</span>
-      </div>
-      <div className="chat-body">
-        {snapshot.chat.length === 0 ? (
-          <div className="chat-welcome">
-            <span className="chat-orbit">
-              <Eye size={27} />
-            </span>
-            <h3>A little more aware.</h3>
-            <p>
-              Connect a vision model, choose your sources, and ask a question
-              about your workspace.
-            </p>
-            <button
-              className="question-chip"
-              onClick={() =>
-                setText("What changed across the selected sources?")
-              }
-            >
-              What changed in my workspace? <ArrowUpRight size={13} />
-            </button>
-            <button
-              className="question-chip"
-              onClick={() =>
-                setText("Summarize what is visible in the selected sources.")
-              }
-            >
-              Summarize what is in view <ArrowUpRight size={13} />
-            </button>
-            <div className="assistant-note">
-              <ShieldCheck size={15} />
-              Observations never trigger computer actions.
+      <div className="chat-body" ref={historyRef}>
+        {snapshot.chat.map((message) => (
+          <div className={`chat-message ${message.role}`} key={message.id}>
+            <div className="message-heading">
+              <strong>{message.role === "user" ? "You" : "OpenAware"}</strong>
+              <time>{time(message.at)}</time>
             </div>
+            <p>{message.text}</p>
+            {message.observation && (
+              <span className="evidence-caption">
+                Evidence {age(message.observation.capturedAt)} ·{" "}
+                {message.observation.status}
+              </span>
+            )}
           </div>
-        ) : (
-          snapshot.chat.map((message) => (
-            <div className={`chat-message ${message.role}`} key={message.id}>
-              <div className="message-heading">
-                <strong>{message.role === "user" ? "You" : "OpenAware"}</strong>
-                <time>{time(message.at)}</time>
-              </div>
-              <p>{message.text}</p>
-              {message.observation && (
-                <span className="evidence-caption">
-                  Evidence {age(message.observation.capturedAt)} ·{" "}
-                  {message.observation.status}
-                </span>
-              )}
-            </div>
-          ))
-        )}
+        ))}
         {asking && (
           <div className="chat-waiting">
             <span className="pulse-dot" /> Looking at selected sources…
@@ -1185,35 +1189,55 @@ function Conversation({
         )}
         <div ref={bottom} />
       </div>
-      <form className="chat-compose" onSubmit={(e) => void submit(e)}>
-        <div
-          className="source-chips"
-          aria-label="Sources included in the question"
-        >
-          {snapshot.sources
-            .filter((s) => s.status === "live")
-            .map((s) => (
-              <button
-                key={s.id}
-                type="button"
-                className={`source-chip ${selected.includes(s.id) ? "selected" : ""}`}
-                aria-pressed={selected.includes(s.id)}
-                onClick={() =>
-                  setSelected((ids) =>
-                    ids.includes(s.id)
-                      ? ids.filter((id) => id !== s.id)
-                      : [...ids, s.id],
-                  )
-                }
-              >
-                <span className="tiny-dot" />
-                {s.name}
-              </button>
-            ))}
-          {!snapshot.sources.some((s) => s.status === "live") && (
-            <span className="muted small">No live sources selected</span>
-          )}
+      <form
+        ref={composeRef}
+        className="chat-compose"
+        onSubmit={(e) => void submit(e)}
+      >
+        <div className="chat-compose-tools">
+          <button
+            ref={sourcesTrigger}
+            type="button"
+            className="text-button question-sources-button"
+            aria-label="Choose question sources"
+            aria-expanded={sourcesOpen}
+            aria-controls="question-sources-menu"
+            onClick={() => setSourcesOpen((open) => !open)}
+          >
+            <Layers3 size={13} /> Sources ({selected.length})
+          </button>
         </div>
+        {sourcesOpen && (
+          <div
+            className="question-sources-menu"
+            style={{ maxHeight: sourceMenuHeight }}
+            id="question-sources-menu"
+            role="group"
+            aria-label="Question sources"
+          >
+            {snapshot.sources
+              .filter((s) => s.status === "live")
+              .map((s) => (
+                <label key={s.id} className="question-source-option">
+                  <input
+                    type="checkbox"
+                    checked={selected.includes(s.id)}
+                    onChange={(event) =>
+                      setSelected((ids) =>
+                        event.target.checked
+                          ? [...ids, s.id]
+                          : ids.filter((id) => id !== s.id),
+                      )
+                    }
+                  />
+                  {s.name}
+                </label>
+              ))}
+            {!snapshot.sources.some((s) => s.status === "live") && (
+              <span className="muted small">No live sources</span>
+            )}
+          </div>
+        )}
         <div className="input-composer">
           <textarea
             aria-label="Ask about your workspace"
@@ -1243,9 +1267,6 @@ function Conversation({
             <Send size={17} />
           </button>
         </div>
-        <span className="compose-note">
-          Selected sources only · Images sent to your local model
-        </span>
       </form>
     </section>
   );

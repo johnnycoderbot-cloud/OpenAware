@@ -1,6 +1,6 @@
 # Background monitoring with tray controls
 
-OpenAware v0.2.1 retains the background controls introduced in v0.2: it can hide its dashboard while the currently configured capture and awareness session continues. In this release, headless means a hidden dashboard with a system tray in the same interactive Windows desktop session. Sources and native permissions remain attached to that session.
+OpenAware v0.2.2 retains the background controls introduced in v0.2: it can hide its dashboard while the currently configured capture and awareness session continues. In this release, headless means a hidden dashboard with a system tray in the same interactive Windows desktop session. Sources and native permissions remain attached to that session.
 
 ## Configure, then hide
 

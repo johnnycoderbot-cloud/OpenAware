@@ -23,3 +23,5 @@ Subsequent authorization to build the application is tracked in the [v0.1 implem
 The owner's concept-fidelity and tray-background follow-up is tracked in the [v0.2 implementation ledger](implementation-v0.2.md).
 
 The selected-monitor permission and recognizable tray-icon correction is tracked in the [v0.2.1 implementation ledger](implementation-v0.2.1.md).
+
+The lower-feed visibility and all-main-pane docking request is tracked in the [v0.2.2 implementation ledger](implementation-v0.2.2.md).

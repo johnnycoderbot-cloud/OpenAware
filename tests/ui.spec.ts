@@ -53,6 +53,20 @@ test("motion-only watching is explicit and Stop all remains keyboard accessible"
       page.getByRole("button", { name: "Start watching", exact: true }),
     ).toBeDisabled();
     // Effective permissions are authoritative service state, so wait for the IPC acknowledgement.
+    const sourceName = await page.evaluate(
+      async () =>
+        (await window.openAware!.invoke({ type: "state.get" })).sources[0]!
+          .name,
+    );
+    const settings = tile.getByRole("button", {
+      name: `Settings for ${sourceName}`,
+      exact: true,
+    });
+    await expect(
+      tile.getByRole("checkbox", { name: "AI analysis", exact: true }),
+    ).not.toBeVisible();
+    await settings.click();
+    await expect(settings).toHaveAttribute("aria-expanded", "true");
     await tile.getByRole("checkbox", { name: "AI analysis" }).click();
     await expect(
       tile.getByRole("checkbox", { name: "AI analysis" }),
@@ -61,6 +75,8 @@ test("motion-only watching is explicit and Stop all remains keyboard accessible"
     await expect(
       tile.getByRole("checkbox", { name: "Motion alerts" }),
     ).toBeChecked();
+    await settings.click();
+    await expect(settings).toHaveAttribute("aria-expanded", "false");
     await page
       .getByRole("button", { name: "Start watching", exact: true })
       .click();
@@ -163,9 +179,18 @@ test("connection forms verify a synthetic image and chat uses only selected mask
         page.getByRole("heading", { name, exact: true }),
       ).toBeVisible();
     }
-    const alpha = page
-      .getByTestId("source-tile")
-      .filter({ has: page.getByRole("heading", { name: "Alpha demo" }) });
+    const alphaId = await page.evaluate(
+      async () =>
+        (await window.openAware!.invoke({ type: "state.get" })).sources.find(
+          (source) => source.name === "Alpha demo",
+        )!.id,
+    );
+    const alpha = page.locator(
+      `[data-testid="source-tile"][data-source-id="${alphaId}"]`,
+    );
+    await alpha
+      .getByRole("button", { name: "Settings for Alpha demo", exact: true })
+      .click();
     await alpha
       .getByRole("button", { name: "Privacy masks for Alpha demo" })
       .click();
@@ -208,10 +233,21 @@ test("connection forms verify a synthetic image and chat uses only selected mask
     ).toHaveLength(1);
     await page.getByRole("button", { name: "Overview", exact: true }).click();
     // No automatic monitor start is needed for an explicit, scoped question.
-    await page.getByRole("button", { name: "Beta demo", exact: true }).click();
+    const questionSources = page.getByRole("button", {
+      name: "Choose question sources",
+      exact: true,
+    });
+    await questionSources.click();
     await expect(
-      page.getByRole("button", { name: "Beta demo", exact: true }),
-    ).toHaveAttribute("aria-pressed", "false");
+      page.getByRole("checkbox", { name: "Alpha demo", exact: true }),
+    ).toBeChecked();
+    await page
+      .getByRole("checkbox", { name: "Beta demo", exact: true })
+      .uncheck();
+    await expect(
+      page.getByRole("checkbox", { name: "Beta demo", exact: true }),
+    ).not.toBeChecked();
+    await questionSources.click();
     await page
       .getByRole("textbox", { name: "Ask about your workspace" })
       .fill("Describe the MASKED_SOURCE_ONLY_TEST image");
