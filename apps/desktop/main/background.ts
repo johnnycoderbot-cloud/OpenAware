@@ -135,7 +135,11 @@ export class DesktopBackgroundController {
     if (this.quitting) return;
     this.quitting = true;
     this.state.backgroundMode = false;
-    this.publish();
+    try {
+      this.publish();
+    } catch {
+      this.cleanupError();
+    }
     // Continue cleanup even if one native cleanup operation fails.
     for (const cleanup of [
       this.controls.stop,
@@ -145,8 +149,15 @@ export class DesktopBackgroundController {
       try {
         cleanup();
       } catch {
-        this.controls.onCleanupError?.();
+        this.cleanupError();
       }
+    }
+  }
+  private cleanupError(): void {
+    try {
+      this.controls.onCleanupError?.();
+    } catch {
+      // Reporting cannot prevent capture revocation or subsequent cleanup.
     }
   }
 

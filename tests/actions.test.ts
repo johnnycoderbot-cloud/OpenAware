@@ -115,6 +115,79 @@ test("stop during native approval revokes even a positive answer", async () => {
   assert.match((await broker.execute(input))[0].message, /revoked/);
   assert.equal(fake.effects(), 0);
 });
+
+test("Stop settles an unresponsive native review and releases the broker", async () => {
+  const input = plan();
+  const fake = fixture(input);
+  let reviewStarted!: () => void;
+  const reviewing = new Promise<void>((resolve) => (reviewStarted = resolve));
+  fake.dependencies.approve = () => {
+    reviewStarted();
+    return new Promise<boolean>(() => {});
+  };
+  const broker = new ActionBroker(fake.dependencies);
+  const pending = broker.execute(input);
+  await reviewing;
+  broker.revoke();
+  const results = await Promise.race([
+    pending,
+    new Promise<never>((_resolve, reject) =>
+      setTimeout(() => reject(new Error("Review stayed busy after Stop")), 100),
+    ),
+  ]);
+  assert.match(results[0].message, /revoked|stopped/i);
+  assert.equal(fake.effects(), 0);
+  const next = plan();
+  fake.dependencies.inspect = async () => fixture(next).inspection();
+  fake.dependencies.approve = async () => false;
+  assert.equal((await broker.execute(next))[0].status, "cancelled");
+});
+
+test("plan expiry closes an unresponsive review without native input", async () => {
+  const input = { ...plan(), expiresAt: timestamp + 20 };
+  const fake = fixture(input);
+  fake.dependencies.approve = () => new Promise<boolean>(() => {});
+  const results = await Promise.race([
+    new ActionBroker(fake.dependencies).execute(input),
+    new Promise<never>((_resolve, reject) =>
+      setTimeout(() => reject(new Error("Expired review did not settle")), 100),
+    ),
+  ]);
+  assert.match(results[0].message, /expired/i);
+  assert.equal(fake.effects(), 0);
+});
+
+for (const stage of ["inspect", "effect"] as const) {
+  test(`Stop settles an unresponsive ${stage} with no automatic retry`, async () => {
+    const input = plan();
+    const fake = fixture(input);
+    let began!: () => void;
+    const starting = new Promise<void>((resolve) => (began = resolve));
+    let calls = 0;
+    const unresponsive = () => {
+      calls++;
+      began();
+      return new Promise<never>(() => {});
+    };
+    if (stage === "inspect") fake.dependencies.inspect = unresponsive;
+    else fake.dependencies.effect = unresponsive;
+    const broker = new ActionBroker(fake.dependencies);
+    const pending = broker.execute(input);
+    await starting;
+    broker.revoke();
+    const results = await Promise.race([
+      pending,
+      new Promise<never>((_resolve, reject) =>
+        setTimeout(
+          () => reject(new Error("Stopped stage did not settle")),
+          100,
+        ),
+      ),
+    ]);
+    assert.equal(results[0].status, stage === "effect" ? "unknown" : "failed");
+    assert.equal(calls, 1);
+  });
+}
 test("plan expiry during review denies input", async () => {
   const input = plan();
   const fake = fixture(input);

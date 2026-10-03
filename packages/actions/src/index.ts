@@ -168,7 +168,28 @@ export class ActionBroker {
   constructor(private dependencies: ActionDependencies) {}
   revoke(): void {
     this.generation += 1;
-    this.controller?.abort();
+    this.controller?.abort(new Error("Actions revoked by Stop"));
+  }
+  private async cancellable<T>(
+    pending: Promise<T>,
+    signal: AbortSignal,
+  ): Promise<T> {
+    let abort!: () => void;
+    const cancelled = new Promise<never>((_resolve, reject) => {
+      abort = () =>
+        reject(
+          signal.reason instanceof Error
+            ? signal.reason
+            : new Error("Actions revoked by Stop"),
+        );
+      signal.addEventListener("abort", abort, { once: true });
+      if (signal.aborted) abort();
+    });
+    try {
+      return await Promise.race([pending, cancelled]);
+    } finally {
+      signal.removeEventListener("abort", abort);
+    }
   }
   private assertLive(plan: AutomationPlan, generation: number): void {
     if (generation !== this.generation || this.controller?.signal.aborted)
@@ -216,17 +237,23 @@ export class ActionBroker {
       Math.min(30_000, plan.expiresAt - this.dependencies.now());
     this.executed.add(plan.id);
     this.busy = true;
-    this.controller = new AbortController();
+    const controller = (this.controller = new AbortController());
+    const timer = setTimeout(
+      () =>
+        controller.abort(
+          new Error("Plan elapsed lifetime expired; request a new plan"),
+        ),
+      Math.max(1, Math.min(30_000, plan.expiresAt - this.dependencies.now())),
+    );
     const results: ActionResult[] = [];
     try {
       for (const [index, step] of plan.steps.entries()) {
         let effectStarted = false;
         try {
           this.assertLive(plan, generation);
-          const before = await this.dependencies.inspect(
-            plan,
-            step,
-            this.controller.signal,
+          const before = await this.cancellable(
+            this.dependencies.inspect(plan, step, this.controller.signal),
+            controller.signal,
           );
           this.assertLive(plan, generation);
           if (
@@ -242,12 +269,15 @@ export class ActionBroker {
           )
             throw new Error("Inspection is stale");
           if (
-            !(await this.dependencies.approve(
-              plan,
-              step,
-              index,
-              before,
-              this.controller.signal,
+            !(await this.cancellable(
+              this.dependencies.approve(
+                plan,
+                step,
+                index,
+                before,
+                this.controller.signal,
+              ),
+              controller.signal,
             ))
           ) {
             results.push({
@@ -266,10 +296,9 @@ export class ActionBroker {
             expiresAt: Math.min(plan.expiresAt, this.dependencies.now() + 2000),
             consumed: false,
           };
-          const after = await this.dependencies.inspect(
-            plan,
-            step,
-            this.controller.signal,
+          const after = await this.cancellable(
+            this.dependencies.inspect(plan, step, this.controller.signal),
+            controller.signal,
           );
           this.assertLive(plan, generation);
           if (
@@ -293,11 +322,14 @@ export class ActionBroker {
             throw new Error("Inspection is stale");
           this.consume(grant, digest, index, generation);
           effectStarted = true;
-          await this.dependencies.effect(
-            step,
-            after,
-            Math.min(grant.expiresAt, after.acquiredAt + 2000),
-            this.controller.signal,
+          await this.cancellable(
+            this.dependencies.effect(
+              step,
+              after,
+              Math.min(grant.expiresAt, after.acquiredAt + 2000),
+              this.controller.signal,
+            ),
+            controller.signal,
           );
           results.push({
             step: index,
@@ -316,6 +348,7 @@ export class ActionBroker {
       }
       return results;
     } finally {
+      clearTimeout(timer);
       this.controller = undefined;
       this.busy = false;
     }

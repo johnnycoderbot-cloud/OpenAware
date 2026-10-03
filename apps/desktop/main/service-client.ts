@@ -14,16 +14,20 @@ export class ServiceClient {
   constructor(
     private onState: (state: Snapshot) => void,
     private onCrash: (message: string) => void,
+    private readonly forkProcess: typeof fork = fork,
   ) {}
   start(path: string): void {
-    this.child = fork(path, [], {
+    if (this.closed || this.child)
+      throw new Error("OpenAware service is already started or closed");
+    const child = (this.child = this.forkProcess(path, [], {
       execPath: process.execPath,
       env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
       windowsHide: true,
       stdio: ["ignore", "ignore", "ignore", "ipc"],
       serialization: "json",
-    });
-    this.child.on("message", (message: unknown) => {
+    }));
+    child.on("message", (message: unknown) => {
+      if (this.closed || this.child !== child) return;
       if (!message || typeof message !== "object") return;
       const data = message as {
         type?: string;
@@ -83,14 +87,19 @@ export class ServiceClient {
         reject,
         timer,
       });
-      this.child!.send({ id, command }, (error) => {
+      const sendFailed = (error: unknown) => {
         if (!error) return;
         const pending = this.pending.get(id);
         if (!pending) return;
         clearTimeout(pending.timer);
         this.pending.delete(id);
         pending.reject(new Error("Unable to send service request"));
-      });
+      };
+      try {
+        this.child!.send({ id, command }, sendFailed);
+      } catch {
+        sendFailed(new Error("Unable to send service request"));
+      }
     });
   }
   close(): void {

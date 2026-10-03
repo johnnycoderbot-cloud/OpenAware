@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { parseUnambiguousJson } from "./json.js";
 import type {
   CaptionSearchResult,
   Observation,
@@ -70,7 +71,7 @@ export function parseSemanticObservation(
   if (text.length > 16_384) return unknown();
   let value: unknown;
   try {
-    value = JSON.parse(text);
+    value = parseUnambiguousJson(text);
   } catch {
     return unknown();
   }

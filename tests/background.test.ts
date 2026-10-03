@@ -5,6 +5,10 @@ import {
   launchModeFromArgs,
 } from "../apps/desktop/main/background";
 import type { DesktopState } from "../packages/contracts/src/index";
+import { initialSnapshot } from "../packages/contracts/src/index";
+import { EventEmitter } from "node:events";
+import type { ChildProcess, fork } from "node:child_process";
+import { ServiceClient } from "../apps/desktop/main/service-client";
 
 function fixture(
   launchMode: DesktopState["launchMode"] = "window",
@@ -224,4 +228,99 @@ test("cleanup failure cannot skip service shutdown or cause a second quit", () =
     "destroy-tray",
     "quit",
   ]);
+});
+
+for (const fault of ["state", "error-report"] as const) {
+  test(`shutdown continues when the ${fault} callback throws`, () => {
+    const calls: string[] = [];
+    const controller = new DesktopBackgroundController(
+      {
+        showWindow() {},
+        hideWindow() {},
+        stop() {
+          calls.push("stop");
+          if (fault === "error-report")
+            throw new Error("Synthetic cleanup failure");
+        },
+        closeService() {
+          calls.push("close-service");
+        },
+        destroyTray() {
+          calls.push("destroy-tray");
+        },
+        quitApp() {
+          calls.push("quit");
+        },
+        onState() {
+          if (fault === "state")
+            throw new Error("Synthetic state notification failure");
+        },
+        onCleanupError() {
+          throw new Error("Synthetic error reporter failure");
+        },
+      },
+      "window",
+    );
+    assert.doesNotThrow(() => controller.quit());
+    assert.deepEqual(calls, ["stop", "close-service", "destroy-tray", "quit"]);
+  });
+}
+
+function serviceFixture() {
+  const worker = Object.assign(new EventEmitter(), {
+    connected: true,
+    kill: () => true,
+    send: (_message: unknown, callback: (error?: Error) => void) => callback(),
+  });
+  const states: unknown[] = [];
+  const crashes: string[] = [];
+  const client = new ServiceClient(
+    (state) => states.push(state),
+    (message) => crashes.push(message),
+    (() => worker as unknown as ChildProcess) as typeof fork,
+  );
+  client.start("synthetic-service-fixture");
+  return { client, worker, states, crashes };
+}
+
+for (const end of ["close", "crash"] as const) {
+  test(`late service state cannot revive a session after ${end}`, () => {
+    const { client, worker, states, crashes } = serviceFixture();
+    if (end === "close") client.close();
+    else worker.emit("error", new Error("Synthetic service failure"));
+    worker.emit("message", { type: "state", state: initialSnapshot() });
+    assert.deepEqual(states, []);
+    assert.equal(crashes.length, end === "crash" ? 1 : 0);
+  });
+}
+
+test("synchronous IPC send failures do not leak queue slots or raw errors", async () => {
+  const { client, worker } = serviceFixture();
+  worker.send = () => {
+    throw new Error("private-sensitive-fixture");
+  };
+  try {
+    for (let count = 0; count < 65; count++) {
+      await assert.rejects(
+        client.request({ type: "state.get" }),
+        /Unable to send service request/,
+      );
+    }
+    assert.equal(Reflect.get(client, "pending").size, 0);
+  } finally {
+    client.close();
+  }
+});
+
+test("service start cannot replace a running or closed worker", () => {
+  const { client } = serviceFixture();
+  assert.throws(
+    () => client.start("replacement-fixture"),
+    /already started or closed/,
+  );
+  client.close();
+  assert.throws(
+    () => client.start("replacement-fixture"),
+    /already started or closed/,
+  );
 });

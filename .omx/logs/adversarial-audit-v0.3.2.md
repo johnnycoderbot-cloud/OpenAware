@@ -1,0 +1,51 @@
+# Adversarial audit findings
+
+Baseline: v0.3.1, main `69de3121f6881c0ba1a90303c2b0ff21e88c738e`. The [audit plan](../plans/adversarial-audit-v0.3.2.md) assigns four exclusive lanes. The owner asked to find bugs and try to break the app. Twenty-three reproduced defects were repaired; verification and developer-package delivery are in progress. No finite audit establishes that every possible bug is absent.
+
+## Confirmed findings
+
+P2 denotes incorrect behavior, scope handling or lifecycle recovery; P3 denotes misleading CLI input/error behavior. Each entry has failing-before and passing-after regression evidence, using synthetic media, a controlled provider or injected OS/IPC dependencies. These are distinct failure cases; several share one parser or cancellation fix.
+
+| ID | Severity | Reproduction and observed failure before repair | Repair and regression evidence |
+| --- | --- | --- | --- |
+| B01 | P2 | Exclude Beta from question sources; visit Connections/Operator/Event log and return. Beta became selected again. | Keep exclusions in session-level UI state, including reconnects. `adversarial.spec.ts`: question scope. |
+| B02 | P2 | Type an unsent question and change pages. Draft disappeared. | Keep draft above page-local components. Same page-navigation regression. |
+| B03 | P2 | Confirm IME text with a composing Enter. A real mock inference request was sent and input cleared. | Guard composing Enter and key code 229. `adversarial.spec.ts`: IME. |
+| B04 | P2 | Send a question, type another while its response is pending, then complete the first response. New draft disappeared. | Clear only the exact submitted draft. `adversarial.spec.ts`: newer unsent draft. |
+| B05 | P2 | Deliver video every 20 ms while motion IPC waits 80 ms. No frozen AI frame was submitted. | Preserve frozen pixels and original monotonic capture age; revalidate source/mask revision, dimensions and Stop. `capture.test.ts`: continuous delivery and frozen camera pixels. |
+| B06 | P2 | Submit a vision-fresh but motion-stale frame; command rejects. A subsequent question still dispatched that rejected image. | Validate motion age before receipt/replay/provenance mutation. `runtime.test.ts`: rejected frame admission. |
+| B07 | P2 | Feed two semantic outputs with duplicate `verdict` keys, including escaped-equivalent keys. Last value qualified an alert. | Reject duplicate keys at every object depth before semantic/plan use. Runtime, core and video-workflow regressions. |
+| B08 | P2 | Supply a PNG header without IDAT/IEND, or a JPEG with zero components/no scan. Image admission succeeded. | Require bounded complete PNG chunk structure and coherent JPEG SOF/SOS structure. `core.test.ts`: malformed images. Full pixel decoding remains outside this gate. |
+| B09 | P2 | Stop or let a plan expire while inspect/review/effect dependency never settles. Action broker remained busy. | Race waits against Stop and monotonic expiry; clean listeners/timers; uncertain effects remain unknown and are never retried. `actions.test.ts`. |
+| B10 | P2 | Throw from a shutdown state/error callback. Remaining capture/service cleanup was skipped. | Continue revoke-first shutdown independently of reporting failures. `background.test.ts`: throwing callbacks. |
+| B11 | P2 | Deliver a service state message after close or crash. It could revive state. | Reject messages from inactive workers; prevent replacing running/closed workers. `background.test.ts`: late state. |
+| B12 | P2 | Make IPC send throw synchronously, repeat 65 times. Pending queue slots leaked and raw error escaped. | Clear each pending request and return a stable error. `background.test.ts`: synchronous IPC failures. |
+| B13 | P2 | Hidden capture poll never resolves; call Stop. Awaiting owner calls never settled. | Owner revocation actively cancels calls; 15-second acquisition and 5-second poll limits; late results cannot affect replacement owners. `desktop-capture.test.ts`. |
+| B14 | P2 | Ollama returns done=true with length truncation, wrong role, malformed tools or an error. Text was accepted. | Validate completion envelopes in both image/text inference paths. `providers.test.ts`: Ollama incomplete replies. |
+| B15 | P2 | LM Studio returns a message alongside error or unsupported output. Message was accepted. | Validate every output record before joining message text. Provider mixed-output regression. |
+| B16 | P2 | Ollama supplies string or malformed capability metadata. It silently became unknown. | Require bounded string arrays when capabilities are supplied; absence remains unknown. Provider capability regression. |
+| B17 | P2 | Put byte 0xff inside provider/command JSON strings. It became replacement text and commands dispatched. | Fatal UTF-8 decoding before parsing. Provider and local-API regressions. |
+| B18 | P2 | Duplicate command, provider tool/error, descriptor or success fields hid earlier values. They were accepted. | Shared unambiguous JSON parsing in provider, local API and CLI boundaries. Escaped-key/envelope regressions. |
+| B19 | P2 | CLI receives HTTP 200 with missing/null/array data or invalid projections. It returned undefined or crashed. | Validate descriptor/success envelope and required projection collections. `local-api.test.ts`: invalid CLI envelopes. |
+| B20 | P3 | Disconnect CLI response body after HTTP headers. Raw TypeError leaked. | Stable redacted connection failure. CLI body-disconnect regression. |
+| B21 | P3 | Search with February 30 or April 31. Date parser silently shifted the scope. | Validate calendar day before timestamp conversion. CLI date regression. |
+| B22 | P2 | Present a stale connection descriptor larger than 4 KiB. It was read and replaced. | Reject oversized descriptor before reading. Local API descriptor regression. |
+| B23 | P2 | Fail one Ollama capability lookup while sibling discovery workers remain active. Later lookup requests continued after failure. | Abort sibling requests on first failure, preserving bounded concurrency. Provider discovery-cancellation regression. |
+
+Independent cross-review also caught an introduced JPEG repeated-SOF dimension-overwrite problem before release. The correction rejects repeated frame headers, including after scan data, and validates first-header geometry immediately. Its regression failed before correction and passes afterward; an independent probe and final source review approved it. It is not counted as an additional baseline defect. Release verification also caught hardcoded snapshot metadata still reporting v0.3.1. Snapshot version now comes from package metadata; a failing-before unit and packaged version assertion cover the correction.
+
+## Verification and coverage
+
+Final strict TypeScript passes, as do all 193 unit/integration tests and all 14 packaged desktop workflows. Strict TypeScript initially found a test-only indexed-function assignment; explicit branches corrected it. The page-scope, IME and newer-draft regressions failed against the original packaged v0.3.1 binary and passed against the corrected package. Five hundred deterministic dock/resize/source-churn operations preserve unique identities and finite, non-overlapping geometry.
+
+Native inspection covered all four pages in the original running build, including a missing llama.cpp server, safe unavailable Operator controls and its error event. Final v0.3.2 native inspection covered Overview, Operator, Connections and Event log, draft persistence through all pages, unavailable-server recovery, acknowledgement and clearing audit events. Final packaged tests cover generated sources, two exact native fixture windows, mask-protected chat, caption/rule controls, llama.cpp protocol fixtures, two/four-source layout/docking, Stop, background/headless startup and installed tray callbacks. Planning/link validation passes for 49 Markdown documents. Prior v0.3.1 checks remain historical baseline evidence, not this audit's result.
+
+## Review and limits
+
+Boundary changes were independently approved by the runtime worker. Desktop lifecycle and renderer capture changes were independently approved by the boundary worker. UI and runtime changes were independently approved by the desktop worker after the repeated-SOF correction.
+
+No real capture permission, camera/monitor content, live trading, native input, model download or external service was used to reproduce these defects. Hardware performance, mixed-DPI input/capture and model accuracy are unverified here. The image gate checks bounded structure and geometry rather than full PNG CRC/zlib or JPEG entropy decoding. Startup capture load/source-list stalls use the same abort-aware bounded helper as tested polls, but do not have separate stall regressions. CLI success payloads receive envelope/projection checks rather than a complete domain schema. The local API holds a command slot until its service promise settles; arbitrary injected callbacks that ignore cancellation can retain slots after HTTP timeout. Normal application service requests have their own deadlines; freeing unresolved-work slots would remove the concurrency bound. Persisted setup/history, more than four sources, unattended input and NVIDIA/Metis/Bionic functionality remain documented product limits, not claimed repairs.
+
+## Package and delivery
+
+The unsigned Windows x64 installer is 114,936,080 bytes, SHA-256 `37b196047431b00a0b7b9dc9e3d21aef29944c31c4b692ab1fe181752078dd63`. Read-only installer extraction matches the tested unpacked `app.asar` (`94a65bc84dc03b4a906344bf3c5dcbf3ef7d44885f7aed6c6b517cf90e710ab8`) and external CLI (`3912267f27188c947d1ea75a9953d237c6960bc2382e9ed0415d572005d42b1b`). Installation and shortcuts are not exercised. The existing personal CLI bundle is updated to this tested CLI; live status reports v0.3.2 with no selected sources, and Stop succeeds. The corrected application remains visible on Overview with audit input/events cleared. No skill instructions or provider setup are changed. Both personal skill/tool snapshots and indexes were rebuilt without embeddings and hash-verified. Exact-source CI and public release verification are pending.

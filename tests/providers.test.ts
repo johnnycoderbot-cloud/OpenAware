@@ -810,3 +810,214 @@ test("image dimensions, actual image format, typed action parameters, and model 
     /unsupported tool/,
   );
 });
+
+test("Ollama rejects truncated, wrong-role and malformed tool replies in both inference paths", async (t) => {
+  let output: unknown;
+  const endpoint = await server(t, (request, response) => {
+    if (request.url === "/api/show")
+      return json(response, { capabilities: ["vision"] });
+    json(response, output);
+  });
+  const provider = createProvider({ provider: "ollama", endpoint });
+  for (const invalid of [
+    {
+      done: true,
+      done_reason: "length",
+      message: { content: "secret-fixture" },
+    },
+    { done: true, message: { role: "user", content: "secret-fixture" } },
+    { done: true, message: { content: "secret-fixture", tool_calls: "bad" } },
+    { done: true, message: { content: "secret-fixture", function_call: {} } },
+    { done: true, error: "secret-fixture", message: { content: "Fine" } },
+  ]) {
+    output = invalid;
+    await assert.rejects(
+      provider.analyze(
+        {
+          modelId: "vision",
+          frames: [frame()],
+          question: "Describe",
+          mode: "chat",
+        },
+        new AbortController().signal,
+      ),
+      (error) =>
+        error instanceof Error && !error.message.includes("secret-fixture"),
+    );
+    await assert.rejects(
+      provider.summarize!(historyInput(), new AbortController().signal),
+    );
+  }
+});
+
+test("LM Studio does not accept message text alongside error or unsupported output records", async (t) => {
+  let output: unknown;
+  const endpoint = await server(t, (_request, response) =>
+    json(response, output),
+  );
+  const provider = createProvider({ provider: "lmstudio", endpoint });
+  for (const invalid of [
+    {
+      output: [
+        { type: "message", content: "Fine" },
+        { type: "error", content: "secret-fixture" },
+      ],
+    },
+    { output: [{ type: "message", content: "Fine" }, { type: "tool_result" }] },
+    { error: "secret-fixture", output: [{ type: "message", content: "Fine" }] },
+  ]) {
+    output = invalid;
+    await assert.rejects(
+      provider.analyze(
+        {
+          modelId: "vision",
+          frames: [frame()],
+          question: "Describe",
+          mode: "chat",
+        },
+        new AbortController().signal,
+      ),
+      (error) =>
+        error instanceof Error && !error.message.includes("secret-fixture"),
+    );
+    await assert.rejects(
+      provider.summarize!(historyInput(), new AbortController().signal),
+    );
+  }
+});
+
+test("Ollama rejects malformed capabilities while absent capabilities remain unknown", async (t) => {
+  let capabilities: unknown;
+  const endpoint = await server(t, (request, response) =>
+    json(
+      response,
+      request.url === "/api/tags"
+        ? { models: [{ name: "vision" }] }
+        : { capabilities },
+    ),
+  );
+  const provider = createProvider({ provider: "ollama", endpoint });
+  for (const invalid of [
+    "vision",
+    ["vision", 7],
+    Array.from({ length: 17 }, () => "vision"),
+  ]) {
+    capabilities = invalid;
+    await assert.rejects(provider.discover(new AbortController().signal));
+  }
+  capabilities = undefined;
+  assert.equal(
+    (await provider.discover(new AbortController().signal))[0].vision,
+    "unknown",
+  );
+});
+
+test("provider JSON must be valid UTF-8 rather than silently replacing damaged text", async (t) => {
+  const endpoint = await server(t, (_request, response) => {
+    response.end(
+      Buffer.concat([
+        Buffer.from('{"text":"'),
+        Buffer.from([0xff]),
+        Buffer.from('"}'),
+      ]),
+    );
+  });
+  await assert.rejects(
+    boundedJson(endpoint, "/damaged", undefined, new AbortController().signal),
+    /connection or response failed/,
+  );
+});
+
+test("provider envelopes reject duplicate and escaped-equivalent JSON keys", async (t) => {
+  let text = '{"done":false,"done":true,"message":{"content":"Fine"}}';
+  const endpoint = await server(t, (_request, response) => {
+    response.end(text);
+  });
+  for (const duplicate of [
+    '{"done":false,"done":true,"message":{"content":"Fine"}}',
+    '{"message":{"tool_calls":[{}],"tool_\\u0063alls":[],"content":"Fine"},"done":true}',
+  ]) {
+    text = duplicate;
+    await assert.rejects(
+      boundedJson(
+        endpoint,
+        "/ambiguous",
+        undefined,
+        new AbortController().signal,
+      ),
+      /connection or response failed/,
+    );
+  }
+});
+
+test("provider body-stage cancellation, timeout and disconnect retain redacted failures", async (t) => {
+  let cancelOpened = false;
+  const endpoint = await server(t, (request, response) => {
+    response.writeHead(200, {
+      "content-type": "application/json",
+      "content-length": "1000",
+    });
+    response.write('{"private-sensitive-sentinel":');
+    if (request.url === "/cancel") cancelOpened = true;
+    if (request.url === "/disconnect") setTimeout(() => response.destroy(), 10);
+  });
+  await assert.rejects(
+    boundedJson(
+      endpoint,
+      "/timeout",
+      undefined,
+      new AbortController().signal,
+      undefined,
+      200,
+    ),
+    /timed out/,
+  );
+  const controller = new AbortController();
+  const pending = boundedJson(
+    endpoint,
+    "/cancel",
+    "private-sensitive-sentinel",
+    controller.signal,
+  );
+  const cancelled = assert.rejects(pending, /cancelled/);
+  for (let count = 0; !cancelOpened && count < 50; count++)
+    await new Promise((resolve) => setTimeout(resolve, 2));
+  assert.equal(cancelOpened, true);
+  controller.abort();
+  await cancelled;
+  await assert.rejects(
+    boundedJson(
+      endpoint,
+      "/disconnect",
+      undefined,
+      new AbortController().signal,
+    ),
+    (error) =>
+      error instanceof Error &&
+      error.message === "Provider connection or response failed",
+  );
+});
+
+test("failed Ollama discovery cancels sibling lookups instead of continuing after rejection", async (t) => {
+  const shown: string[] = [];
+  const endpoint = await server(t, async (request, response) => {
+    if (request.url === "/api/tags")
+      return json(response, {
+        models: Array.from({ length: 8 }, (_, index) => ({
+          name: `model-${index}`,
+        })),
+      });
+    const input = await body(request);
+    shown.push(input.model);
+    if (input.model === "model-0")
+      return json(response, { capabilities: "bad" });
+    setTimeout(() => json(response, { capabilities: ["vision"] }), 30);
+  });
+  const provider = createProvider({ provider: "ollama", endpoint });
+  await assert.rejects(provider.discover(new AbortController().signal));
+  await new Promise((resolve) => setTimeout(resolve, 90));
+  assert.equal(
+    shown.some((id) => Number(id.slice(6)) >= 4),
+    false,
+  );
+});

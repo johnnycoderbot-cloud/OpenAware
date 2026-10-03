@@ -6,6 +6,7 @@ import {
   commandSchema,
   type Command,
 } from "../../packages/contracts/src/index.js";
+import { parseUnambiguousJson } from "../../packages/core/src/json.js";
 
 const usage = `OpenAware local video workflows
 Start OpenAware with --enable-cli and configure sources/model in the app first.
@@ -53,6 +54,13 @@ function time(value: string | undefined) {
   if (!value) return undefined;
   if (!/^\d{4}-\d\d-\d\dT/.test(value))
     throw new Error("Times must be ISO date-times");
+  const year = Number(value.slice(0, 4)),
+    month = Number(value.slice(5, 7)),
+    day = Number(value.slice(8, 10));
+  const calendar = new Date(0);
+  calendar.setUTCFullYear(year, month, 0);
+  if (month < 1 || month > 12 || day < 1 || day > calendar.getUTCDate())
+    throw new Error("Invalid time");
   const parsed = Date.parse(value);
   if (!Number.isFinite(parsed)) throw new Error("Invalid time");
   return parsed;
@@ -204,17 +212,28 @@ export async function runCli(args: string[]) {
     throw new Error("OpenAware connection file must be private");
   let config;
   try {
-    config = JSON.parse(await readFile(file, "utf8"));
+    config = parseUnambiguousJson(
+      new TextDecoder("utf-8", { fatal: true }).decode(await readFile(file)),
+    );
   } catch {
     throw new Error("Invalid OpenAware connection file");
   }
   if (
+    !config ||
+    typeof config !== "object" ||
+    Array.isArray(config) ||
+    !("version" in config) ||
     config.version !== 1 ||
+    !("port" in config) ||
+    typeof config.port !== "number" ||
     !Number.isInteger(config.port) ||
     config.port < 1 ||
     config.port > 65535 ||
+    !("token" in config) ||
     typeof config.token !== "string" ||
     !/^[a-f0-9]{64}$/.test(config.token) ||
+    !("pid" in config) ||
+    typeof config.pid !== "number" ||
     !Number.isInteger(config.pid) ||
     config.pid < 1
   )
@@ -254,15 +273,29 @@ export async function runCli(args: string[]) {
       }
       parts.push(part.value);
     }
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      error.message === "OpenAware response is too large"
+    )
+      throw error;
+    throw new Error("OpenAware CLI connection failed or timed out");
   } finally {
     reader.releaseLock();
   }
   let result;
   try {
-    result = JSON.parse(Buffer.concat(parts, size).toString("utf8"));
+    result = parseUnambiguousJson(
+      new TextDecoder("utf-8", { fatal: true }).decode(
+        Buffer.concat(parts, size),
+      ),
+    );
   } catch {
     throw new Error("Invalid OpenAware response");
   }
+  if (!result || typeof result !== "object" || Array.isArray(result))
+    throw new Error("Invalid OpenAware response");
+  const envelope = result as Record<string, unknown>;
   if (!response.ok) {
     const allowed = [
       "COMMAND_FAILED",
@@ -273,14 +306,33 @@ export async function runCli(args: string[]) {
       "TIMEOUT",
     ];
     throw new Error(
-      `OpenAware request failed (${allowed.includes(result.error) ? result.error : response.status})`,
+      `OpenAware request failed (${typeof envelope.error === "string" && allowed.includes(envelope.error) ? envelope.error : response.status})`,
     );
   }
-  if (operation.projection === "sources")
-    return { sources: result.data.sources };
-  if (operation.projection === "rules")
-    return { rules: result.data.pipeline.rules };
-  return result.data;
+  if (
+    !envelope.data ||
+    typeof envelope.data !== "object" ||
+    Array.isArray(envelope.data) ||
+    envelope.error !== undefined
+  )
+    throw new Error("Invalid OpenAware response");
+  const data = envelope.data as Record<string, unknown>;
+  if (operation.projection === "sources") {
+    if (!Array.isArray(data.sources))
+      throw new Error("Invalid OpenAware response");
+    return { sources: data.sources };
+  }
+  if (operation.projection === "rules") {
+    if (
+      !data.pipeline ||
+      typeof data.pipeline !== "object" ||
+      !("rules" in data.pipeline) ||
+      !Array.isArray(data.pipeline.rules)
+    )
+      throw new Error("Invalid OpenAware response");
+    return { rules: data.pipeline.rules };
+  }
+  return data;
 }
 
 const invoked =

@@ -4,6 +4,7 @@ import type {
   ProviderKind,
 } from "../../contracts/src/index.js";
 import { validateImage } from "../../core/src/index.js";
+import { parseUnambiguousJson } from "../../core/src/json.js";
 
 export const RESPONSE_LIMIT = 2 * 1024 * 1024;
 export const REQUEST_LIMIT = 4 * 1024 * 1024;
@@ -130,7 +131,11 @@ export async function boundedJson(
       }
       parts.push(part.value);
     }
-    return JSON.parse(Buffer.concat(parts, length).toString("utf8"));
+    return parseUnambiguousJson(
+      new TextDecoder("utf-8", { fatal: true }).decode(
+        Buffer.concat(parts, length),
+      ),
+    );
   } catch (error) {
     const code = error instanceof Error ? error.message : "";
     if (signal.aborted) throw new Error("Provider request cancelled");
@@ -156,6 +161,8 @@ const planInstructions =
 
 function completionText(value: unknown): string {
   const response = record(value);
+  if (response.error != null)
+    throw new Error("Provider returned an error response");
   const choices = array(response.choices, "completion choices", 1).map(record);
   if (choices.length !== 1 || choices[0].index !== 0)
     throw new Error("Provider returned invalid completion choices");
@@ -172,6 +179,61 @@ function completionText(value: unknown): string {
   if (choice.finish_reason !== "stop" || message.role !== "assistant")
     throw new Error("Provider returned an incomplete completion");
   return string(message.content, "message", 16_384);
+}
+
+function nativeCompletionText(value: unknown): string {
+  const response = record(value);
+  if (response.error != null)
+    throw new Error("Provider returned an error response");
+  const output = array(response.output, "output", 256).map(record);
+  if (
+    output.some(
+      (item) => item.type === "tool_call" || item.type === "invalid_tool_call",
+    )
+  )
+    throw new Error("Provider attempted an unsupported tool call");
+  if (
+    output.some((item) => item.type !== "message" && item.type !== "reasoning")
+  )
+    throw new Error("Provider returned unsupported output");
+  return string(
+    output
+      .filter((item) => item.type === "message")
+      .map((item) => string(item.content, "message", 16_384))
+      .join("\n"),
+    "message",
+    16_384,
+  );
+}
+
+function ollamaCompletionText(value: unknown): string {
+  const response = record(value);
+  if (response.error != null)
+    throw new Error("Provider returned an error response");
+  const message = record(response.message);
+  if (
+    message.function_call != null ||
+    (message.tool_calls != null &&
+      (!Array.isArray(message.tool_calls) || message.tool_calls.length > 0))
+  )
+    throw new Error("Provider attempted an unsupported tool call");
+  if (
+    response.done !== true ||
+    (response.done_reason != null && response.done_reason !== "stop") ||
+    (message.role != null && message.role !== "assistant")
+  )
+    throw new Error("Provider returned an incomplete response");
+  return string(message.content, "message", 16_384);
+}
+
+function ollamaCapabilities(
+  detail: Record<string, unknown>,
+): string[] | undefined {
+  return detail.capabilities === undefined
+    ? undefined
+    : array(detail.capabilities, "capabilities", 16).map((capability) =>
+        string(capability, "capability", 32),
+      );
 }
 
 export function createProvider(config: ProviderConfig): VisionProvider {
@@ -258,45 +320,53 @@ export function createProvider(config: ProviderConfig): VisionProvider {
       ).map(record);
       const results: ModelDescriptor[] = new Array(models.length);
       let next = 0;
-      await Promise.all(
-        Array.from({ length: Math.min(4, models.length) }, async () => {
-          while (next < models.length) {
-            const index = next++;
-            const model = models[index];
-            const id = string(model.name ?? model.model, "model id");
-            // Cloud entries may return 410 from /api/show. They are forbidden
-            // locally and must not prevent discovery of unrelated local models.
-            if (remoteModel(model, id)) {
+      const discoveryController = new AbortController();
+      const discoverySignal = AbortSignal.any([
+        signal,
+        discoveryController.signal,
+      ]);
+      try {
+        await Promise.all(
+          Array.from({ length: Math.min(4, models.length) }, async () => {
+            while (next < models.length) {
+              const index = next++;
+              const model = models[index];
+              const id = string(model.name ?? model.model, "model id");
+              // Cloud entries may return 410 from /api/show. They are forbidden
+              // locally and must not prevent discovery of unrelated local models.
+              if (remoteModel(model, id)) {
+                results[index] = {
+                  id,
+                  name: id,
+                  loaded: false,
+                  vision: "unsupported",
+                };
+                continue;
+              }
+              const detail = record(
+                await request("/api/show", discoverySignal, { model: id }),
+              );
+              const capabilities = ollamaCapabilities(detail);
               results[index] = {
                 id,
                 name: id,
                 loaded: false,
-                vision: "unsupported",
+                vision:
+                  remoteModel(model, id) || remoteModel(detail, id)
+                    ? "unsupported"
+                    : capabilities
+                      ? capabilities.includes("vision")
+                        ? "declared"
+                        : "unsupported"
+                      : "unknown",
               };
-              continue;
             }
-            const detail = record(
-              await request("/api/show", signal, { model: id }),
-            );
-            const capabilities = Array.isArray(detail.capabilities)
-              ? detail.capabilities
-              : undefined;
-            results[index] = {
-              id,
-              name: id,
-              loaded: false,
-              vision:
-                remoteModel(model, id) || remoteModel(detail, id)
-                  ? "unsupported"
-                  : capabilities
-                    ? capabilities.includes("vision")
-                      ? "declared"
-                      : "unsupported"
-                    : "unknown",
-            };
-          }
-        }),
-      );
+          }),
+        );
+      } catch (error) {
+        discoveryController.abort();
+        throw error;
+      }
       if (new Set(results.map((model) => model.id)).size !== results.length)
         throw new Error("Provider returned duplicate model identifiers");
       return results;
@@ -346,7 +416,7 @@ export function createProvider(config: ProviderConfig): VisionProvider {
         );
       }
       if (config.provider === "lmstudio") {
-        const response = record(
+        return nativeCompletionText(
           await request(
             "/api/v1/chat",
             signal,
@@ -369,19 +439,6 @@ export function createProvider(config: ProviderConfig): VisionProvider {
             input.mode === "observe" ? 60_000 : 20_000,
           ),
         );
-        const output = array(response.output, "output", 256).map(record);
-        const text = output
-          .filter((item) => item.type === "message")
-          .map((item) => string(item.content, "message", 16_384))
-          .join("\n");
-        if (
-          output.some(
-            (item) =>
-              item.type === "tool_call" || item.type === "invalid_tool_call",
-          )
-        )
-          throw new Error("Provider attempted an unsupported tool call");
-        return string(text, "message", 16_384);
       }
       // A local Ollama origin may proxy a cloud model. Reinspect route metadata before serializing pixels.
       const detail = record(
@@ -391,7 +448,8 @@ export function createProvider(config: ProviderConfig): VisionProvider {
         throw new Error(
           "Provider remote model route is disabled in this local-only build",
         );
-      const response = record(
+      const capabilities = ollamaCapabilities(detail);
+      return ollamaCompletionText(
         await request(
           "/api/chat",
           signal,
@@ -409,10 +467,7 @@ export function createProvider(config: ProviderConfig): VisionProvider {
             ],
             stream: false,
             options: { num_predict: 1024, temperature: 0.1 },
-            ...(Array.isArray(detail.capabilities) &&
-            detail.capabilities.includes("thinking")
-              ? { think: false }
-              : {}),
+            ...(capabilities?.includes("thinking") ? { think: false } : {}),
             ...(input.mode === "plan" || input.structured
               ? { format: "json" }
               : {}),
@@ -420,12 +475,6 @@ export function createProvider(config: ProviderConfig): VisionProvider {
           input.mode === "observe" ? 60_000 : 20_000,
         ),
       );
-      const message = record(response.message);
-      if (Array.isArray(message.tool_calls) && message.tool_calls.length)
-        throw new Error("Provider attempted an unsupported tool call");
-      if (response.done !== true)
-        throw new Error("Provider returned an incomplete response");
-      return string(message.content, "message", 16_384);
     },
     async summarize(input, signal) {
       string(input.modelId, "model id");
@@ -477,7 +526,7 @@ export function createProvider(config: ProviderConfig): VisionProvider {
         );
       }
       if (config.provider === "lmstudio") {
-        const response = record(
+        return nativeCompletionText(
           await request(
             "/api/v1/chat",
             signal,
@@ -494,22 +543,6 @@ export function createProvider(config: ProviderConfig): VisionProvider {
             60_000,
           ),
         );
-        const output = array(response.output, "output", 256).map(record);
-        if (
-          output.some(
-            (item) =>
-              item.type === "tool_call" || item.type === "invalid_tool_call",
-          )
-        )
-          throw new Error("Provider attempted an unsupported tool call");
-        return string(
-          output
-            .filter((item) => item.type === "message")
-            .map((item) => string(item.content, "message", 16_384))
-            .join("\n"),
-          "message",
-          16_384,
-        );
       }
       const detail = record(
         await request("/api/show", signal, { model: input.modelId }),
@@ -518,7 +551,8 @@ export function createProvider(config: ProviderConfig): VisionProvider {
         throw new Error(
           "Provider remote model route is disabled in this local-only build",
         );
-      const response = record(
+      const capabilities = ollamaCapabilities(detail);
+      return ollamaCompletionText(
         await request(
           "/api/chat",
           signal,
@@ -529,21 +563,12 @@ export function createProvider(config: ProviderConfig): VisionProvider {
               { role: "user", content: prompt },
             ],
             stream: false,
-            ...(Array.isArray(detail.capabilities) &&
-            detail.capabilities.includes("thinking")
-              ? { think: false }
-              : {}),
+            ...(capabilities?.includes("thinking") ? { think: false } : {}),
             options: { num_predict: 512, temperature: 0.1 },
           },
           60_000,
         ),
       );
-      const message = record(response.message);
-      if (Array.isArray(message.tool_calls) && message.tool_calls.length)
-        throw new Error("Provider attempted an unsupported tool call");
-      if (response.done !== true)
-        throw new Error("Provider returned an incomplete response");
-      return string(message.content, "message", 16_384);
     },
   };
 }

@@ -111,6 +111,10 @@ export function App() {
   const [desktopState, setDesktopState] = useState<DesktopState>();
   const [notice, setNotice] = useState<string>();
   const [pending, setPending] = useState<string[]>([]);
+  const [questionDraft, setQuestionDraft] = useState("");
+  const [excludedQuestionSources, setExcludedQuestionSources] = useState<
+    string[]
+  >([]);
   const [, redraw] = useState(0);
   const managerRef = useRef<CaptureManager | undefined>(undefined);
   const bridge = window.openAware;
@@ -152,6 +156,14 @@ export function App() {
   useEffect(() => {
     if (snapshot.session === "stopped") manager?.stopAll();
   }, [snapshot.session, manager]);
+  useEffect(() => {
+    setExcludedQuestionSources((ids) => {
+      const next = ids.filter((id) =>
+        snapshot.sources.some((source) => source.id === id),
+      );
+      return next.length === ids.length ? ids : next;
+    });
+  }, [snapshot.sources]);
   useEffect(() => {
     if (!bridge) return;
     const unsubscribe = bridge.onDesktopState(setDesktopState);
@@ -629,6 +641,10 @@ export function App() {
                     snapshot={snapshot}
                     run={run}
                     pending={pending}
+                    text={questionDraft}
+                    setText={setQuestionDraft}
+                    excluded={excludedQuestionSources}
+                    setExcluded={setExcludedQuestionSources}
                   />
                 </DockPane>
                 <DockPane
@@ -1120,20 +1136,30 @@ function Conversation({
   snapshot,
   run,
   pending,
+  text,
+  setText,
+  excluded,
+  setExcluded,
 }: {
   snapshot: Snapshot;
   run: (command: Command, label?: string) => Promise<Snapshot | undefined>;
   pending: string[];
+  text: string;
+  setText: React.Dispatch<React.SetStateAction<string>>;
+  excluded: string[];
+  setExcluded: React.Dispatch<React.SetStateAction<string[]>>;
 }) {
-  const [text, setText] = useState("");
-  const [selected, setSelected] = useState<string[]>([]);
+  const selected = snapshot.sources
+    .filter(
+      (source) => source.status === "live" && !excluded.includes(source.id),
+    )
+    .map((source) => source.id);
   const [sourcesOpen, setSourcesOpen] = useState(false);
   const [sourceMenuHeight, setSourceMenuHeight] = useState(155);
   const composeRef = useRef<HTMLFormElement>(null);
   const historyRef = useRef<HTMLDivElement>(null);
   const sourcesTrigger = useRef<HTMLButtonElement>(null);
   const bottom = useRef<HTMLDivElement>(null);
-  const knownSources = useRef<string[]>([]);
   useEffect(() => {
     const history = historyRef.current;
     if (!history) return;
@@ -1166,20 +1192,6 @@ function Conversation({
     };
   }, [sourcesOpen]);
   useEffect(() => {
-    const live = snapshot.sources
-      .filter((s) => s.status === "live")
-      .map((s) => s.id);
-    const added = live.filter((id) => !knownSources.current.includes(id));
-    knownSources.current = live;
-    setSelected((prev) => {
-      const next = [...prev.filter((id) => live.includes(id)), ...added];
-      return next.length === prev.length &&
-        next.every((id, i) => id === prev[i])
-        ? prev
-        : next;
-    });
-  }, [snapshot.sources]);
-  useEffect(() => {
     bottom.current?.scrollIntoView({ block: "nearest" });
   }, [snapshot.chat.length]);
   const asking = pending.includes("conversation.ask");
@@ -1192,12 +1204,13 @@ function Conversation({
       snapshot.binding.status !== "verified"
     )
       return;
+    const submittedText = text;
     const result = await run({
       type: "conversation.ask",
-      text,
+      text: submittedText,
       sourceIds: selected,
     });
-    if (result) setText("");
+    if (result) setText((draft) => (draft === submittedText ? "" : draft));
   }
   return (
     <section
@@ -1268,10 +1281,10 @@ function Conversation({
                     type="checkbox"
                     checked={selected.includes(s.id)}
                     onChange={(event) =>
-                      setSelected((ids) =>
+                      setExcluded((ids) =>
                         event.target.checked
-                          ? [...ids, s.id]
-                          : ids.filter((id) => id !== s.id),
+                          ? ids.filter((id) => id !== s.id)
+                          : [...new Set([...ids, s.id])],
                       )
                     }
                   />
@@ -1292,7 +1305,12 @@ function Conversation({
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
+              if (
+                e.key === "Enter" &&
+                !e.shiftKey &&
+                !e.nativeEvent.isComposing &&
+                e.keyCode !== 229
+              ) {
                 e.preventDefault();
                 void submit(e);
               }

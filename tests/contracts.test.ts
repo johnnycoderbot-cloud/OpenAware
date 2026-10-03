@@ -1,10 +1,15 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import packageMetadata from "../package.json" with { type: "json" };
 import {
   commandSchema,
   initialSnapshot,
 } from "../packages/contracts/src/index";
+
+test("service snapshots report the application package version", () => {
+  assert.equal(initialSnapshot().version, packageMetadata.version);
+});
 
 test("privileged bridge refuses unknown operations and additional raw command fields", () => {
   assert.equal(
@@ -96,4 +101,49 @@ test("startup snapshot has no capture, inference, content history, or provider c
   assert.deepEqual(state.sources, []);
   assert.deepEqual(state.chat, []);
   assert.equal("token" in state.binding, false);
+});
+
+test("numeric transport fields refuse nonfinite, unsafe integer and string coercion edges", () => {
+  const sourceId = randomUUID();
+  for (const value of [
+    NaN,
+    Infinity,
+    -Infinity,
+    "1",
+    null,
+    0,
+    -1,
+    1.5,
+    Number.MAX_SAFE_INTEGER + 1,
+  ])
+    assert.equal(
+      commandSchema.safeParse({
+        type: "source.motion",
+        sourceId,
+        sourceRevision: value,
+        capturedAt: Date.now(),
+        value: 0.5,
+      }).success,
+      false,
+    );
+  for (const value of [NaN, Infinity, -Infinity, "1", null, -0.1, 1.1])
+    assert.equal(
+      commandSchema.safeParse({
+        type: "source.motion",
+        sourceId,
+        sourceRevision: 1,
+        capturedAt: Date.now(),
+        value,
+      }).success,
+      false,
+    );
+  for (const value of [NaN, Infinity, -Infinity, "1", null, -1])
+    assert.equal(
+      commandSchema.safeParse({
+        type: "history.search",
+        query: "q",
+        from: value,
+      }).success,
+      false,
+    );
 });

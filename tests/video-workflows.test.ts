@@ -103,6 +103,20 @@ test("semantic JSON accepts only an exact complete rule identity/revision set; a
     );
 });
 
+test("duplicate semantic JSON object keys, including escaped equivalents, are ambiguous rather than last-wins", () => {
+  const rules = [{ id: ruleId, revision: 1 }];
+  const entry = `"ruleId":"${ruleId}","ruleRevision":1,"verdict":"match","evidence":"Visible person"`;
+  for (const text of [
+    `{"summary":"Unknown","summary":"Person appeared","rules":[{${entry}}]}`,
+    `{"summary":"Person appeared","rules":[{${entry},"verdict":"match"}]}`,
+    `{"summary":"Person appeared","rules":[{${entry},"ver\\u0064ict":"match"}]}`,
+  ])
+    assert.equal(
+      parseSemanticObservation(text, rules).evidence[0]!.verdict,
+      "unknown",
+    );
+});
+
 test("semantic stability needs two distinct inputs two seconds apart and cannot rearm from unknown evidence", () => {
   const state = initialSemanticState();
   const evaluate = (

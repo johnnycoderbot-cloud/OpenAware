@@ -909,16 +909,24 @@ export function createService(options: ServiceOptions = {}): Service {
       ? message.slice(0, 300)
       : "Model operation failed; check local provider and selected model";
   }
-  function motion(item: Source, value: number, capturedAt: number) {
+  function requireFreshMotion(capturedAt: number) {
+    const age = clock.wall() - capturedAt;
+    if (age < -250 || age > 1000)
+      throw new Error("Motion sample is stale or has a future capture time");
+  }
+  function motion(
+    item: Source,
+    value: number,
+    capturedAt: number,
+    validated = false,
+  ) {
     if (
       state.session !== "monitoring" ||
       !item.motionEnabled ||
       item.status !== "live"
     )
       return;
-    const age = clock.wall() - capturedAt;
-    if (age < -250 || age > 1000)
-      throw new Error("Motion sample is stale or has a future capture time");
+    if (!validated) requireFreshMotion(capturedAt);
     const metric = motions.get(item.id) ?? initialMotion();
     motions.set(item.id, metric);
     if (updateMotion(metric, value, capturedAt, clock.mono()))
@@ -1033,6 +1041,13 @@ export function createService(options: ServiceOptions = {}): Service {
         const seen = seenFrames.get(item.id) ?? [];
         if (seen.includes(command.frame.id)) throw new Error("Duplicate frame");
         const receipt = imageReceipt(command.frame);
+        // Complete validation before changing receipt, replay, or provenance state.
+        if (
+          command.frame.motion !== undefined &&
+          state.session === "monitoring" &&
+          item.motionEnabled
+        )
+          requireFreshMotion(command.frame.capturedAt);
         const latest = frames.get(item.id);
         if (latest && command.frame.capturedAt <= latest.frame.capturedAt)
           throw new Error("Frame capture order changed");
@@ -1056,7 +1071,7 @@ export function createService(options: ServiceOptions = {}): Service {
         seenFrames.set(item.id, seen.slice(-64));
         item.lastFrameAt = command.frame.capturedAt;
         if (command.frame.motion !== undefined)
-          motion(item, command.frame.motion, command.frame.capturedAt);
+          motion(item, command.frame.motion, command.frame.capturedAt, true);
         pump();
         emit();
         return { accepted: true };

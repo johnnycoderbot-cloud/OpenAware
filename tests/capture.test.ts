@@ -44,6 +44,7 @@ function browser(
   manualImages = false,
 ) {
   let luminance = 0;
+  const encodedLuminance: number[] = [];
   const videos: Array<{ callbacks: Map<number, () => void> }> = [];
   function deliver() {
     const video = videos.at(-1);
@@ -107,12 +108,15 @@ function browser(
         videos.push(video);
         return video;
       }
-      if (tag === "canvas")
+      if (tag === "canvas") {
+        let drawnLuminance = 0;
         return {
           width: 0,
           height: 0,
           getContext: () => ({
-            drawImage: () => {},
+            drawImage: () => {
+              drawnLuminance = luminance;
+            },
             fillRect: () => {},
             getImageData: (
               _x: number,
@@ -122,17 +126,21 @@ function browser(
             ) => {
               const data = new Uint8ClampedArray(width * height * 4);
               for (let i = 0; i < data.length; i += 4) {
-                data[i] = luminance;
-                data[i + 1] = luminance;
-                data[i + 2] = luminance;
+                data[i] = drawnLuminance;
+                data[i + 1] = drawnLuminance;
+                data[i + 2] = drawnLuminance;
                 data[i + 3] = 255;
               }
               return { data };
             },
           }),
           // The bridge fixture does not decode image content; transport is asserted separately in providers/UI tests.
-          toDataURL: () => "data:image/jpeg;base64,/9j/2Q==",
+          toDataURL: () => {
+            encodedLuminance.push(drawnLuminance);
+            return "data:image/jpeg;base64,/9j/2Q==";
+          },
         };
+      }
       throw new Error(`Unexpected element ${tag}`);
     },
   };
@@ -164,6 +172,7 @@ function browser(
       luminance = value;
     },
     deliver,
+    encodedLuminance,
     images,
     decodeImage(index: number, width = 1280, height = 720) {
       const image = images[index];
@@ -449,6 +458,40 @@ test("sampling a stalled video does not refresh evidence or repeat motion until 
   assert.equal(metrics[1].value, 1);
 });
 
+test("continuous delivery during delayed motion IPC does not starve frozen AI samples", async (t) => {
+  const current = media();
+  const scene = browser(t, async () => current.stream);
+  const h = harness(true);
+  const invoke = h.bridge.invoke;
+  h.bridge.invoke = async <T>(command: Command): Promise<T> => {
+    const result = await invoke<T>(command);
+    if (command.type === "source.motion")
+      await new Promise((resolve) => setTimeout(resolve, 80));
+    return result;
+  };
+  const continuous = setInterval(() => scene.deliver(), 20);
+  t.after(() => {
+    clearInterval(continuous);
+    h.manager.stopAll();
+  });
+  await h.manager.start(h.source);
+  const firstMotion = h.commands.find(
+    (command) => command.type === "source.motion",
+  )!;
+  const frames = h.commands.filter(
+    (command) => command.type === "source.frame",
+  );
+  assert.equal(
+    frames.length,
+    1,
+    "new deliveries must not discard already frozen, still-fresh pixels",
+  );
+  assert.equal(frames[0].frame.capturedAt, firstMotion.capturedAt);
+  assert.ok(
+    h.manager.info(h.source.id)!.previewAt > frames[0].frame.capturedAt,
+  );
+});
+
 test("isolated desktop previews preserve native geometry and the original decoded frame time", async (t) => {
   browser(t, async () => {
     throw new Error("Desktop previews must not request dashboard camera media");
@@ -674,7 +717,7 @@ test("a desktop dimension change while motion submission is pending cannot send 
   assert.equal(frame.frame.sourceRevision, h.state.sources[0].revision);
 });
 
-test("a camera delivery while motion submission is pending cannot be assigned the previous frame timestamp", async (t) => {
+test("a camera delivery during motion submission preserves frozen pixels and their original timestamp", async (t) => {
   const current = media();
   const scene = browser(t, async () => current.stream);
   const h = harness(true);
@@ -690,6 +733,9 @@ test("a camera delivery while motion submission is pending cannot be assigned th
   await eventually(() =>
     h.commands.some((command) => command.type === "source.motion"),
   );
+  const motion = h.commands.find(
+    (command) => command.type === "source.motion",
+  )!;
   scene.setLuminance(255);
   scene.deliver();
   const latestAt = h.manager.info(h.source.id)!.previewAt;
@@ -697,12 +743,11 @@ test("a camera delivery while motion submission is pending cannot be assigned th
   await start;
   assert.equal(
     h.commands.filter((command) => command.type === "source.frame").length,
-    0,
-    "new camera pixels cannot complete the old frame submission",
-  );
-  await eventually(() =>
-    h.commands.some((command) => command.type === "source.frame"),
+    1,
+    "the frozen frame remains eligible while the preview advances",
   );
   const frame = h.commands.find((command) => command.type === "source.frame")!;
-  assert.equal(frame.frame.capturedAt, latestAt);
+  assert.equal(frame.frame.capturedAt, motion.capturedAt);
+  assert.ok(latestAt! > frame.frame.capturedAt);
+  assert.deepEqual(scene.encodedLuminance, [0]);
 });

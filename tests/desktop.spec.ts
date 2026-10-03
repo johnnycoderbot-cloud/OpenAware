@@ -67,6 +67,17 @@ test("desktop runs synthetic preview, scopes local vision, stops acquisition, an
   });
   try {
     const page = await app.firstWindow();
+    const applicationVersion = await app.evaluate(({ app }) =>
+      app.getVersion(),
+    );
+    await expect
+      .poll(() =>
+        page.evaluate(
+          async () =>
+            (await window.openAware!.invoke({ type: "state.get" })).version,
+        ),
+      )
+      .toBe(applicationVersion);
     const connectionPath = join(
       await app.evaluate(({ app }) => app.getPath("userData")),
       "local-api.json",

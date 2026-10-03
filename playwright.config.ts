@@ -8,6 +8,7 @@ export default defineConfig({
     "tray.spec.ts",
     "visual.spec.ts",
     "native-capture.spec.ts",
+    "adversarial.spec.ts",
   ],
   workers: 1,
   timeout: 45_000,

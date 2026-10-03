@@ -41,6 +41,7 @@ interface CaptureEntry {
   window: BrowserWindow;
   session: Session;
   grant: DisplayCaptureGrant;
+  controller: AbortController;
   frame?: WebFrameMain;
   timer?: ReturnType<typeof setTimeout>;
   lastSequence: number;
@@ -203,6 +204,7 @@ export class DesktopCaptureBroker {
       window: helper,
       session: captureSession,
       grant: new DisplayCaptureGrant(true),
+      controller: new AbortController(),
       stopped: false,
       lastSequence: 0,
       lastCapturedAt: 0,
@@ -219,7 +221,10 @@ export class DesktopCaptureBroker {
     helper.webContents.on("render-process-gone", () => this.fail(entry));
     helper.on("closed", () => this.fail(entry));
     try {
-      await helper.loadFile(this.capturePath);
+      await this.withTimeout(
+        helper.loadFile(this.capturePath),
+        entry.controller.signal,
+      );
       if (!this.current(entry)) throw new Error(CAPTURE_START_FAILURE);
       entry.frame = helper.webContents.mainFrame;
       if (!this.ownedFrame(entry, entry.frame))
@@ -229,6 +234,7 @@ export class DesktopCaptureBroker {
       // helper accepts no arguments and cannot choose a source or call IPC.
       await this.withTimeout(
         helper.webContents.executeJavaScript(START_CAPTURE, true),
+        entry.controller.signal,
       );
       if (!this.ownedFrame(entry, entry.frame))
         throw new Error(CAPTURE_START_FAILURE);
@@ -250,6 +256,7 @@ export class DesktopCaptureBroker {
     entry.stopped = true;
     this.entries.delete(sourceId);
     entry.grant.revoke();
+    entry.controller.abort();
     if (entry.timer) clearTimeout(entry.timer);
     if (!entry.window.isDestroyed()) entry.window.destroy();
     // The nonpersistent session contains no other document. Keep its handlers
@@ -342,12 +349,14 @@ export class DesktopCaptureBroker {
           callback({});
           return;
         }
-        void desktopCapturer
-          .getSources({
+        void this.withTimeout(
+          desktopCapturer.getSources({
             types: [entry.deviceId.startsWith("screen:") ? "screen" : "window"],
             thumbnailSize: { width: 0, height: 0 },
             fetchWindowIcons: false,
-          })
+          }),
+          entry.controller.signal,
+        )
           .then((choices) => {
             const choice = choices.find((item) => item.id === entry.deviceId);
             if (
@@ -389,8 +398,11 @@ export class DesktopCaptureBroker {
   private async poll(entry: CaptureEntry): Promise<void> {
     if (!this.ownedFrame(entry, entry.frame)) return;
     try {
-      const raw: unknown =
-        await entry.window.webContents.executeJavaScript(TAKE_FRAME);
+      const raw: unknown = await this.withTimeout(
+        entry.window.webContents.executeJavaScript(TAKE_FRAME),
+        entry.controller.signal,
+        5000,
+      );
       if (!this.ownedFrame(entry, entry.frame)) return;
       if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
         this.fail(entry);
@@ -433,20 +445,30 @@ export class DesktopCaptureBroker {
     this.stop(entry.sourceId, entry.captureId);
     this.options.onError(entry.sourceId, CAPTURE_FAILURE, entry.captureId);
   }
-  private async withTimeout<T>(pending: Promise<T>): Promise<T> {
+  private async withTimeout<T>(
+    pending: Promise<T>,
+    signal: AbortSignal,
+    timeoutMs = 15_000,
+  ): Promise<T> {
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let abort!: () => void;
     try {
       return await Promise.race([
         pending,
         new Promise<never>((_resolve, reject) => {
+          abort = () =>
+            reject(new Error("Desktop capture connection was stopped."));
+          signal.addEventListener("abort", abort, { once: true });
+          if (signal.aborted) abort();
           timer = setTimeout(
             () => reject(new Error(CAPTURE_START_FAILURE)),
-            15_000,
+            timeoutMs,
           );
         }),
       ]);
     } finally {
       if (timer) clearTimeout(timer);
+      signal.removeEventListener("abort", abort);
     }
   }
 }

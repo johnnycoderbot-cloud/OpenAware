@@ -1,4 +1,5 @@
 import { z } from "zod";
+import packageMetadata from "../../../package.json" with { type: "json" };
 
 export const MAX_SOURCES = 4;
 export const MAX_FRAME_BYTES = 1_048_576;
@@ -404,7 +405,7 @@ export interface OpenAwareBridge {
   quit(): Promise<void>;
 }
 export const initialSnapshot = (): Snapshot => ({
-  version: "0.3.1",
+  version: packageMetadata.version,
   session: "idle",
   epoch: 1,
   sources: [],

@@ -173,6 +173,7 @@ test("local API bounds request bodies, concurrency, timeout and redacts backend 
     429,
   );
   const stopped = await runCli(["--connection", busy.file, "watch", "stop"]);
+  assert(typeof stopped === "object" && "session" in stopped);
   assert.equal(stopped.session, "idle");
   const notStop = await fetch(`${busy.url}/v1/command`, {
     method: "POST",
@@ -240,6 +241,7 @@ test("CLI parses exact source and history scope and performs an authenticated ro
     return initialSnapshot();
   });
   const status = await runCli(["--connection", f.file, "status"]);
+  assert(typeof status === "object" && "version" in status);
   assert.equal(status.version, initialSnapshot().version);
   assert.deepEqual(await runCli(["--connection", f.file, "sources"]), {
     sources: [],
@@ -297,5 +299,225 @@ test("CLI malformed connection and response errors cannot echo private content",
     runCli(["--connection", f.file, "status"]),
     (error) =>
       error instanceof Error && error.message === "Invalid OpenAware response",
+  );
+});
+
+test("CLI rejects null descriptors and invalid successful response envelopes", async (t) => {
+  const f = await fixture(t);
+  await writeFile(f.file, "null");
+  await assert.rejects(
+    runCli(["--connection", f.file, "status"]),
+    /Invalid OpenAware connection file/,
+  );
+  let output: unknown;
+  const remote = createServer((_request, response) =>
+    response.end(JSON.stringify(output)),
+  );
+  await new Promise<void>((resolve) => remote.listen(0, "127.0.0.1", resolve));
+  t.after(async () => {
+    remote.closeAllConnections();
+    await new Promise<void>((resolve) => remote.close(() => resolve()));
+  });
+  const addr = remote.address();
+  assert(addr && typeof addr !== "string");
+  await writeFile(f.file, JSON.stringify({ ...f.connection, port: addr.port }));
+  for (const invalid of [
+    null,
+    [],
+    {},
+    { error: "BUSY" },
+    { data: null },
+    { data: [] },
+  ]) {
+    output = invalid;
+    await assert.rejects(
+      runCli(["--connection", f.file, "status"]),
+      /Invalid OpenAware response/,
+    );
+  }
+  output = { data: {} };
+  await assert.rejects(
+    runCli(["--connection", f.file, "sources"]),
+    /Invalid OpenAware response/,
+  );
+  await assert.rejects(
+    runCli(["--connection", f.file, "rules", "list"]),
+    /Invalid OpenAware response/,
+  );
+});
+
+test("CLI response disconnects after headers report a stable connection error", async (t) => {
+  const f = await fixture(t);
+  const remote = createServer((_request, response) => {
+    response.writeHead(200, {
+      "content-type": "application/json",
+      "content-length": "1000",
+    });
+    response.write('{"data":');
+    setTimeout(() => response.destroy(), 10);
+  });
+  await new Promise<void>((resolve) => remote.listen(0, "127.0.0.1", resolve));
+  t.after(async () => {
+    remote.closeAllConnections();
+    await new Promise<void>((resolve) => remote.close(() => resolve()));
+  });
+  const addr = remote.address();
+  assert(addr && typeof addr !== "string");
+  await writeFile(f.file, JSON.stringify({ ...f.connection, port: addr.port }));
+  await assert.rejects(
+    runCli(["--connection", f.file, "status"]),
+    /OpenAware CLI connection failed or timed out/,
+  );
+});
+
+test("CLI date filters refuse impossible calendar dates rather than silently rolling them forward", () => {
+  for (const date of [
+    "2026-02-30T00:00:00Z",
+    "2026-04-31T00:00:00Z",
+    "2025-02-29T00:00:00Z",
+  ])
+    assert.throws(
+      () => cliCommand(["captions", "summary", "--from", date]),
+      /Invalid time/,
+    );
+  assert.equal(
+    cliCommand(["captions", "summary", "--from", "2024-02-29T00:00:00Z"])
+      .command.type,
+    "history.summarize",
+  );
+});
+
+test("local API rejects oversized stale connection descriptors before reading them", async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), "openaware-cli-test-"));
+  t.after(async () => rm(dir, { recursive: true, force: true }));
+  const file = join(dir, "local-api.json");
+  await writeFile(
+    file,
+    JSON.stringify({ pid: 2147483647, padding: "x".repeat(4096) }),
+  );
+  const attempt = startLocalApi({
+    descriptorPath: file,
+    command: async () => initialSnapshot(),
+  });
+  t.after(async () => (await attempt.catch(() => undefined))?.close());
+  await assert.rejects(attempt, /Invalid local CLI connection file/);
+});
+
+test("local API rejects damaged UTF-8 commands without dispatching replacement text", async (t) => {
+  let dispatched = 0;
+  const f = await fixture(t, async () => {
+    dispatched++;
+    return initialSnapshot();
+  });
+  const response = await fetch(`${f.url}/v1/command`, {
+    method: "POST",
+    headers: { ...f.auth, "Content-Type": "application/json" },
+    body: Buffer.concat([
+      Buffer.from('{"type":"history.search","query":"'),
+      Buffer.from([0xff]),
+      Buffer.from('"}'),
+    ]),
+  });
+  assert.equal(response.status, 400);
+  assert.equal(dispatched, 0);
+});
+
+test("chunked oversized local API commands receive the same bounded rejection as declared bodies", async (t) => {
+  let dispatched = 0;
+  const f = await fixture(t, async () => {
+    dispatched++;
+    return initialSnapshot();
+  });
+  const result = await new Promise<{ status: number; body: string }>(
+    (resolve, reject) => {
+      const raw = request(
+        `${f.url}/v1/command`,
+        {
+          method: "POST",
+          headers: {
+            ...f.auth,
+            "Content-Type": "application/json",
+            "Transfer-Encoding": "chunked",
+          },
+        },
+        (response) => {
+          let body = "";
+          response.on("data", (part) => (body += part.toString()));
+          response.on("end", () =>
+            resolve({ status: response.statusCode!, body }),
+          );
+          response.on("error", reject);
+        },
+      );
+      raw.on("error", reject);
+      raw.end("x".repeat(32769));
+    },
+  );
+  assert.equal(result.status, 413);
+  assert.deepEqual(JSON.parse(result.body), { error: "BODY_TOO_LARGE" });
+  assert.equal(dispatched, 0);
+});
+
+test("CLI refuses oversized values and nonsensical numeric limits before connecting", () => {
+  const sourceId = randomUUID();
+  for (const args of [
+    ["ask", "x".repeat(4001), "--sources", sourceId],
+    ["captions", "search", "q", "--limit", "NaN"],
+    ["captions", "search", "q", "--limit", "Infinity"],
+    ["captions", "search", "q", "--limit", "9007199254740992"],
+    ["captions", "search", "q", "--limit", "1.5"],
+    [
+      "rules",
+      "add",
+      "--name",
+      "x".repeat(81),
+      "--condition",
+      "present",
+      "--sources",
+      sourceId,
+    ],
+  ])
+    assert.throws(() => cliCommand(args));
+});
+
+test("local API rejects ambiguous duplicate command fields before dispatch", async (t) => {
+  let dispatched = 0;
+  const f = await fixture(t, async () => {
+    dispatched++;
+    return initialSnapshot();
+  });
+  const response = await fetch(`${f.url}/v1/command`, {
+    method: "POST",
+    headers: { ...f.auth, "Content-Type": "application/json" },
+    body: '{"type":"session.stop","type":"history.search","query":"q"}',
+  });
+  assert.equal(response.status, 400);
+  assert.equal(dispatched, 0);
+});
+
+test("CLI refuses ambiguous descriptors and success envelopes", async (t) => {
+  const f = await fixture(t);
+  await writeFile(
+    f.file,
+    JSON.stringify(f.connection).slice(0, -1) + ',"version":1}',
+  );
+  await assert.rejects(
+    runCli(["--connection", f.file, "status"]),
+    /Invalid OpenAware connection file/,
+  );
+  const remote = createServer((_request, response) =>
+    response.end('{"data":{"session":"idle"},"data":{"session":"stopped"}}'),
+  );
+  await new Promise<void>((resolve) => remote.listen(0, "127.0.0.1", resolve));
+  t.after(async () => {
+    remote.closeAllConnections();
+    await new Promise<void>((resolve) => remote.close(() => resolve()));
+  });
+  const addr = remote.address();
+  assert(addr && typeof addr !== "string");
+  await writeFile(f.file, JSON.stringify({ ...f.connection, port: addr.port }));
+  await assert.rejects(
+    runCli(["--connection", f.file, "status"]),
+    /Invalid OpenAware response/,
   );
 });

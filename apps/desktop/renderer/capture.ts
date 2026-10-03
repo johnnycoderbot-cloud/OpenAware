@@ -444,8 +444,8 @@ export class CaptureManager {
     )
       return;
     p.sampledSequence = p.deliverySequence;
-    const deliverySequence = p.deliverySequence;
     const capturedAt = p.deliveredAt;
+    const capturedMonotonic = p.deliveredMonotonic;
     p.busy = true;
     try {
       const motionCanvas = document.createElement("canvas");
@@ -494,13 +494,11 @@ export class CaptureManager {
         !canvas ||
         p.stopped ||
         this.pipelines.get(p.id) !== p ||
-        p.deliverySequence !== deliverySequence ||
-        p.deliveredAt !== capturedAt ||
         (p.nativeWidth || p.video?.videoWidth || p.demo?.width || 0) !==
           width ||
         (p.nativeHeight || p.video?.videoHeight || p.demo?.height || 0) !==
           height ||
-        performance.now() - p.deliveredMonotonic > 5000 ||
+        performance.now() - capturedMonotonic > 5000 ||
         !authority ||
         authority.status !== "live" ||
         authority.revision !== source.revision

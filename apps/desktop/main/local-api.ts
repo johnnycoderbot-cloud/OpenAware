@@ -12,6 +12,7 @@ import {
   type Command,
   type Snapshot,
 } from "../../../packages/contracts/src/index.js";
+import { parseUnambiguousJson } from "../../../packages/core/src/json.js";
 
 const BODY_LIMIT = 32 * 1024;
 const ALLOWED = new Set([
@@ -110,7 +111,11 @@ async function readCommand(request: IncomingMessage): Promise<Command> {
   }
   let raw: unknown;
   try {
-    raw = JSON.parse(Buffer.concat(parts, size).toString("utf8"));
+    raw = parseUnambiguousJson(
+      new TextDecoder("utf-8", { fatal: true }).decode(
+        Buffer.concat(parts, size),
+      ),
+    );
   } catch {
     throw new Error("INVALID_COMMAND");
   }
@@ -237,12 +242,22 @@ export async function startLocalApi(
     });
     try {
       const stat = await lstat(options.descriptorPath);
-      if (stat.isSymbolicLink() || !stat.isFile())
+      if (stat.isSymbolicLink() || !stat.isFile() || stat.size > 4096)
         throw new Error("Invalid local CLI connection file");
-      const previous = JSON.parse(
-        await readFile(options.descriptorPath, "utf8"),
+      const previous = parseUnambiguousJson(
+        new TextDecoder("utf-8", { fatal: true }).decode(
+          await readFile(options.descriptorPath),
+        ),
       );
-      if (!Number.isInteger(previous.pid) || previous.pid < 1)
+      if (
+        !previous ||
+        typeof previous !== "object" ||
+        Array.isArray(previous) ||
+        !("pid" in previous) ||
+        typeof previous.pid !== "number" ||
+        !Number.isSafeInteger(previous.pid) ||
+        previous.pid < 1
+      )
         throw new Error("Invalid local CLI connection file");
       let live = true;
       try {
@@ -273,10 +288,18 @@ export async function startLocalApi(
       for (const response of pending) response.destroy();
       // Electron may exit before an asynchronous filesystem cleanup completes.
       try {
-        const current = JSON.parse(
-          readFileSync(options.descriptorPath, "utf8"),
+        const current = parseUnambiguousJson(
+          new TextDecoder("utf-8", { fatal: true }).decode(
+            readFileSync(options.descriptorPath),
+          ),
         );
-        if (current.token === secret) unlinkSync(options.descriptorPath);
+        if (
+          current &&
+          typeof current === "object" &&
+          "token" in current &&
+          current.token === secret
+        )
+          unlinkSync(options.descriptorPath);
       } catch {
         /* A removed/replaced descriptor does not belong to this session. */
       }

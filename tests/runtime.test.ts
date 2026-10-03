@@ -498,6 +498,115 @@ test("semantic rules need two current distinct observations, produce only observ
   );
 });
 
+test("duplicate JSON verdict keys are ambiguous evidence and cannot trigger a semantic alert", async (t) => {
+  const { service, clock, provider } = await configured(t);
+  const id = await addSource(service, clock);
+  await service.command({
+    type: "rule.add",
+    name: "Ambiguity fixture",
+    condition: "A person appears",
+    sourceIds: [id],
+  });
+  clock.advance(1);
+  await sendFrame(service, clock, id);
+  await service.command({ type: "monitor.start" });
+  for (let count = 0; count < 2; count++) {
+    if (count) {
+      clock.advance(2000);
+      await sendFrame(service, clock, id);
+    }
+    provider.finish(
+      semanticReply(service).replace(
+        '"verdict":"match"',
+        '"verdict":"unknown","verdict":"match"',
+      ),
+    );
+    await settle();
+  }
+  assert.equal(
+    service.snapshot().events.filter((event) => event.type === "alert").length,
+    0,
+  );
+  assert.equal(service.snapshot().pipeline.rules[0]!.status, "unknown");
+  assert.ok(
+    service
+      .snapshot()
+      .observations.every((item) =>
+        item.ruleEvidence?.every((evidence) => evidence.verdict === "unknown"),
+      ),
+  );
+});
+
+test("a failed semantic inference loses prior qualifying stability before monitoring can alert again", async (t) => {
+  const { service, clock, provider } = await configured(t);
+  const id = await addSource(service, clock);
+  await service.command({
+    type: "rule.add",
+    name: "Failure fixture",
+    condition: "A person appears",
+    sourceIds: [id],
+  });
+  clock.advance(1);
+  await sendFrame(service, clock, id);
+  await service.command({ type: "monitor.start" });
+  provider.finish(semanticReply(service));
+  await settle();
+  assert.equal(service.snapshot().pipeline.rules[0]!.status, "pending");
+  clock.advance(2000);
+  await sendFrame(service, clock, id);
+  provider.requests.shift()!.reject(new Error("Provider fixture outage"));
+  await settle();
+  assert.equal(service.snapshot().pipeline.rules[0]!.status, "unknown");
+  for (let count = 0; count < 2; count++) {
+    clock.advance(2000);
+    await sendFrame(service, clock, id);
+    provider.finish(semanticReply(service));
+    await settle();
+    assert.equal(
+      service.snapshot().events.filter((event) => event.type === "alert")
+        .length,
+      count,
+    );
+  }
+});
+
+test("expired queued evidence is rejected without blocking a newer fresh foreground request", async (t) => {
+  const { service, clock, provider } = await configured(t);
+  const id = await addSource(service, clock);
+  const first = service.command({
+    type: "conversation.ask",
+    text: "First",
+    sourceIds: [id],
+  });
+  const stale = service.command({
+    type: "conversation.ask",
+    text: "Queued stale",
+    sourceIds: [id],
+  });
+  const staleRejected = assert.rejects(stale, /Queued evidence became stale/);
+  clock.advance(5001);
+  await sendFrame(service, clock, id);
+  const fresh = service.command({
+    type: "conversation.ask",
+    text: "Fresh successor",
+    sourceIds: [id],
+  });
+  provider.finish("First answer within completion age");
+  await first;
+  await staleRejected;
+  await settle();
+  assert.equal(provider.requests[0]!.input.question, "Fresh successor");
+  assert.equal(provider.maximum, 1);
+  provider.finish("Fresh answer");
+  await fresh;
+  await settle();
+  assert.equal(
+    service.snapshot().chat.filter((item) => item.role === "assistant").length,
+    2,
+  );
+  assert.equal(service.snapshot().busy, false);
+});
+
 test("multi-source semantic rules respect four-image/window limits and ambiguous output cannot alert", async (t) => {
   const { service, clock, provider } = await configured(t);
   const a = await addSource(service, clock, "A"),
@@ -940,6 +1049,44 @@ test("source revision, global stop, and clearing history invalidate late results
     provider.requests.length,
     0,
     "explicit reconnect previews without silently resuming AI",
+  );
+});
+
+test("a frame rejected for stale motion cannot replace accepted vision evidence or advance source provenance", async (t) => {
+  const { service, clock, provider } = await configured(t);
+  const id = await addSource(service, clock, "Atomic fixture", true, true);
+  await service.command({ type: "monitor.start" });
+  const accepted = provider.requests[0]!.input.frames.at(-1)!;
+  provider.finish("Accepted original frame");
+  await settle();
+  clock.advance(2000);
+  const source = service.snapshot().sources.find((item) => item.id === id)!;
+  const rejected = {
+    ...image(clock, id, source.revision),
+    capturedAt: clock.wall() - 1500,
+    motion: 0.2,
+  };
+  await assert.rejects(
+    service.command({ type: "source.frame", frame: rejected }),
+    /Motion sample is stale/,
+  );
+  const answer = service.command({
+    type: "conversation.ask",
+    text: "Inspect accepted evidence only",
+    sourceIds: [id],
+  });
+  const dispatched = provider.requests[0]!.input.frames[0]!;
+  provider.finish("Downstream question result");
+  await answer;
+  await settle();
+  assert.equal(
+    dispatched.id,
+    accepted.id,
+    "a rejected receipt must not reach inference",
+  );
+  assert.equal(
+    service.snapshot().sources.find((item) => item.id === id)!.lastFrameAt,
+    accepted.capturedAt,
   );
 });
 

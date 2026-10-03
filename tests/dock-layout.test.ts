@@ -82,6 +82,60 @@ function assertGeometry(tree: DockNode, bounds: DockRect, minimums = {}) {
   return measured;
 }
 
+test("seeded repeated docking, resizing and source churn preserves every pane", () => {
+  let seed = 0x0a31;
+  const random = () => {
+    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+    return seed / 0x1_0000_0000;
+  };
+  const pool = ["a", "b", "c", "d", "assistant", "memory", "activity"];
+  let ids = [...pool];
+  let tree = buildPaneTree(ids, "horizontal", "seeded");
+  for (let iteration = 0; iteration < 500; iteration++) {
+    if (iteration % 5 === 0) {
+      ids = pool.filter(() => random() > 0.35);
+      if (!ids.length) ids = ["assistant"];
+      tree = reconcilePanes(
+        tree,
+        ids,
+        "reused",
+        random() > 0.5 ? "horizontal" : "vertical",
+      );
+    } else if (iteration % 3 === 0) {
+      const split = allNodes(tree).filter((node) => node.kind === "split");
+      if (split.length)
+        tree = setSplitRatio(
+          tree,
+          split[Math.floor(random() * split.length)]!.id,
+          random() * 4 - 1.5,
+        );
+    } else if (ids.length > 1) {
+      const moving = ids[Math.floor(random() * ids.length)]!;
+      const targets = ids.filter((id) => id !== moving);
+      tree = dockPane(
+        tree,
+        moving,
+        targets[Math.floor(random() * targets.length)]!,
+        sides[Math.floor(random() * sides.length)]!,
+        "reused",
+      );
+    }
+    assertIds(tree, ids);
+    const nodes = allNodes(tree).map((node) => node.id);
+    assert.equal(
+      new Set(nodes).size,
+      nodes.length,
+      "Resize targets remain unique after churn",
+    );
+    assertGeometry(tree, {
+      x: 13,
+      y: 17,
+      width: Math.floor(random() * 1800),
+      height: Math.floor(random() * 1000),
+    });
+  }
+});
+
 test("main dashboard includes a lower pane and gives chat three quarters of the sidebar", () => {
   assertIds(MAIN_DOCK_TREE, mainIds);
   const result = assertGeometry(
