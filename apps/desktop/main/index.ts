@@ -39,6 +39,7 @@ import { ServiceClient } from "./service-client";
 import { DesktopCaptureBroker } from "./desktop-capture";
 import { createTrayIcon } from "./tray-icon";
 import { DesktopBackgroundController, launchModeFromArgs } from "./background";
+import { startLocalApi, type LocalApi } from "./local-api";
 
 const rendererPath = join(__dirname, "renderer", "index.html");
 const rendererUrl = pathToFileURL(rendererPath).href;
@@ -64,6 +65,7 @@ const listedDesktopDevices = new Map<
   { kind: "monitor" | "window"; expiresAt: number }
 >();
 let captureGeneration = 0;
+let localApi: LocalApi | undefined;
 const cameraDialogs = new Set<AbortController>();
 
 function trustedUrl(url: string): boolean {
@@ -470,6 +472,11 @@ function registerIpc(): void {
         "automation.cancel",
         "automation.plan",
         "monitor.pause",
+        "pipeline.configure",
+        "rule.add",
+        "rule.update",
+        "rule.remove",
+        "history.clear",
       ].includes(command.type)
     )
       broker.revoke();
@@ -722,6 +729,36 @@ app
     configurePermissions();
     registerIpc();
     service.start(join(__dirname, "service.cjs"));
+    if (process.argv.includes("--enable-cli")) {
+      try {
+        localApi = await startLocalApi({
+          descriptorPath: join(app.getPath("userData"), "local-api.json"),
+          command: async (command) => {
+            if (command.type === "session.stop") {
+              stopImmediately();
+              return state;
+            }
+            if (
+              [
+                "monitor.pause",
+                "pipeline.configure",
+                "rule.add",
+                "rule.update",
+                "rule.remove",
+              ].includes(command.type)
+            )
+              broker.revoke();
+            return service.request(command);
+          },
+        });
+      } catch {
+        broadcast({
+          ...state,
+          lastError:
+            "Local CLI bridge unavailable. Close another CLI-enabled OpenAware session and retry.",
+        });
+      }
+    }
     Menu.setApplicationMenu(
       Menu.buildFromTemplate([
         {
@@ -790,6 +827,8 @@ app
     app.quit();
   });
 app.on("before-quit", () => {
+  void localApi?.close().catch(() => {});
+  localApi = undefined;
   desktopCapture.close();
   desktopConnections.clear();
   desktop.beginQuit();

@@ -2,6 +2,7 @@ import { z } from "zod";
 
 export const MAX_SOURCES = 4;
 export const MAX_FRAME_BYTES = 1_048_576;
+export const MAX_SEMANTIC_RULES = 8;
 export type ProviderKind = "lmstudio" | "ollama";
 export type SourceKind =
   "demo" | "camera" | "virtual_camera" | "monitor" | "window";
@@ -64,14 +65,67 @@ export interface Observation {
   summary: string;
   status: "current" | "stale";
   durationMs: number;
+  captureStartAt?: number;
+  frameCount?: number;
+  sourceRevisions?: number[];
+  bindingRevision?: number;
+  epoch?: number;
+  ruleEvidence?: RuleEvidence[];
+}
+export interface RuleEvidence {
+  ruleId: string;
+  ruleRevision: number;
+  verdict: "match" | "no_match" | "unknown";
+  evidence: string;
+}
+export interface SemanticRule {
+  id: string;
+  name: string;
+  condition: string;
+  sourceIds: string[];
+  enabled: boolean;
+  revision: number;
+  status: "unknown" | "clear" | "pending" | "active";
+  lastEvaluatedAt?: number;
+  lastTriggeredAt?: number;
+  cooldownUntil?: number;
+}
+export interface PipelineState {
+  temporalEnabled: boolean;
+  rules: SemanticRule[];
+}
+export interface CaptionSearchResult {
+  query: string;
+  matches: { observation: Observation; score: number }[];
+}
+export interface HistorySummary {
+  id: string;
+  status: "queued" | "running" | "completed" | "failed" | "cancelled";
+  question: string;
+  requestedAt: number;
+  completedAt?: number;
+  summary?: string;
+  error?: string;
+  observationIds: string[];
+  sourceIds: string[];
+  sourceNames: string[];
+  captureStartAt: number;
+  capturedAt: number;
+  modelId: string;
+  provider: ProviderKind;
+  bindingRevision: number;
+  epoch: number;
 }
 export interface TimelineEvent {
   id: string;
-  type: "motion" | "observation" | "system" | "error" | "action";
+  type: "motion" | "observation" | "alert" | "system" | "error" | "action";
   sourceId?: string;
   occurredAt: number;
   message: string;
   acknowledged: boolean;
+  ruleId?: string;
+  ruleRevision?: number;
+  observationId?: string;
 }
 export interface ChatMessage {
   id: string;
@@ -119,6 +173,8 @@ export interface Snapshot {
   queueSize: number;
   lastError?: string;
   pendingPlan?: AutomationPlan;
+  pipeline: PipelineState;
+  historySummary?: HistorySummary;
 }
 export interface CaptureChoice {
   id: string;
@@ -244,6 +300,67 @@ export const commandSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("automation.cancel") }).strict(),
   z.object({ type: z.literal("events.ack"), eventId: id }).strict(),
   z.object({ type: z.literal("history.clear") }).strict(),
+  z
+    .object({
+      type: z.literal("pipeline.configure"),
+      temporalEnabled: z.boolean(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("rule.add"),
+      name: z.string().trim().min(1).max(80),
+      condition: z.string().trim().min(1).max(512),
+      sourceIds,
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("rule.update"),
+      ruleId: id,
+      patch: z
+        .object({
+          name: z.string().trim().min(1).max(80).optional(),
+          condition: z.string().trim().min(1).max(512).optional(),
+          sourceIds: sourceIds.optional(),
+          enabled: z.boolean().optional(),
+        })
+        .strict()
+        .refine((patch) => Object.keys(patch).length > 0),
+    })
+    .strict(),
+  z.object({ type: z.literal("rule.remove"), ruleId: id }).strict(),
+  z
+    .object({
+      type: z.literal("history.search"),
+      query: z.string().trim().min(1).max(512),
+      sourceIds: sourceIds.optional(),
+      from: z.number().finite().nonnegative().optional(),
+      to: z.number().finite().nonnegative().optional(),
+      limit: z.number().int().min(1).max(50).optional(),
+    })
+    .strict()
+    .refine(
+      (scope) =>
+        scope.from === undefined ||
+        scope.to === undefined ||
+        scope.from <= scope.to,
+    ),
+  z
+    .object({
+      type: z.literal("history.summarize"),
+      sourceIds: sourceIds.optional(),
+      from: z.number().finite().nonnegative().optional(),
+      to: z.number().finite().nonnegative().optional(),
+      question: z.string().trim().min(1).max(500).optional(),
+    })
+    .strict()
+    .refine(
+      (scope) =>
+        scope.from === undefined ||
+        scope.to === undefined ||
+        scope.from <= scope.to,
+    ),
 ]);
 export type Command = z.infer<typeof commandSchema>;
 export interface DesktopState {
@@ -287,7 +404,7 @@ export interface OpenAwareBridge {
   quit(): Promise<void>;
 }
 export const initialSnapshot = (): Snapshot => ({
-  version: "0.2.4",
+  version: "0.3.0",
   session: "idle",
   epoch: 1,
   sources: [],
@@ -302,6 +419,7 @@ export const initialSnapshot = (): Snapshot => ({
   observations: [],
   events: [],
   chat: [],
+  pipeline: { temporalEnabled: true, rules: [] },
   busy: false,
   queueSize: 0,
 });

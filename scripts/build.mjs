@@ -33,6 +33,17 @@ for (const [name, entry] of Object.entries({
     logLevel: "info",
   });
 }
+await bundle({
+  entryPoints: ["apps/cli/index.ts"],
+  outfile: "dist/cli.cjs",
+  bundle: true,
+  platform: "node",
+  format: "cjs",
+  target: "node24",
+  define: { OPENAWARE_CLI_ENTRY: "true", "import.meta.url": "undefined" },
+  sourcemap: false,
+  logLevel: "info",
+});
 await viteBuild({
   root: resolve("apps/desktop/renderer"),
   base: "./",

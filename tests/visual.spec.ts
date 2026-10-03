@@ -323,7 +323,7 @@ async function fittedSource(source: Locator) {
 async function extraBelowSources(page: Page, ids: string[]) {
   const extra = pane(page, "extra");
   await expect(
-    page.getByRole("heading", { name: "New pane", exact: true }),
+    page.getByRole("heading", { name: "Video memory", exact: true }),
   ).toHaveCount(1);
   await expect
     .poll(async () => {
@@ -336,6 +336,103 @@ async function extraBelowSources(page: Page, ids: string[]) {
       );
     })
     .toBe(true);
+}
+
+async function memoryControls(page: Page, sourceId: string) {
+  const memoryPane = pane(page, "extra");
+  const memory = memoryPane.getByRole("region", {
+    name: "Video memory",
+    exact: true,
+  });
+  await expect(memory).toHaveCount(1);
+  await memoryPane.scrollIntoViewIfNeeded();
+  const withinMemory = async (control: Locator, label: string) => {
+    await expect(control).toBeVisible();
+    // Scroll the memory pane's own body. A generic document scroll cannot make
+    // a control clipped inside that body pass the full-containment assertion.
+    await control.evaluate((node) => {
+      const scroller = node.closest(".dock-pane-content")!;
+      const bounds = scroller.getBoundingClientRect();
+      const rect = node.getBoundingClientRect();
+      scroller.scrollTop +=
+        rect.top < bounds.top
+          ? rect.top - bounds.top
+          : rect.bottom > bounds.bottom
+            ? rect.bottom - bounds.bottom
+            : 0;
+      scroller.scrollLeft +=
+        rect.left < bounds.left
+          ? rect.left - bounds.left
+          : rect.right > bounds.right
+            ? rect.right - bounds.right
+            : 0;
+    });
+    await fullyContained(control, ".dock-pane-content", label);
+    await expect
+      .poll(
+        () =>
+          control.evaluate((node) => {
+            const rect = node.getBoundingClientRect();
+            const hit = document.elementFromPoint(
+              rect.x + rect.width / 2,
+              rect.y + rect.height / 2,
+            );
+            return hit === node || (!!hit && node.contains(hit));
+          }),
+        { message: `${label} must be reachable within the memory body` },
+      )
+      .toBe(true);
+  };
+  const search = memory.getByRole("searchbox", {
+    name: "Search captions",
+    exact: true,
+  });
+  const source = memory.getByRole("combobox", {
+    name: "Memory source",
+    exact: true,
+  });
+  const time = memory.getByRole("combobox", {
+    name: "Memory time range",
+    exact: true,
+  });
+  const searchButton = memory.getByRole("button", {
+    name: "Search captions",
+    exact: true,
+  });
+  const summarize = memory.getByRole("button", {
+    name: "Summarize history",
+    exact: true,
+  });
+  await withinMemory(search, "Memory search");
+  await search.fill("generated fixture");
+  await withinMemory(source, "Memory source scope");
+  await source.selectOption(sourceId);
+  await withinMemory(time, "Memory time scope");
+  await time.selectOption({ label: "Custom range" });
+  const from = memory.getByLabel("Memory from", { exact: true });
+  const to = memory.getByLabel("Memory to", { exact: true });
+  await withinMemory(from, "Memory from time");
+  await from.fill("2026-01-01T00:00");
+  await withinMemory(to, "Memory to time");
+  await to.fill("2027-01-01T00:00");
+  await withinMemory(searchButton, "Memory Search");
+  await searchButton.click();
+  await expect(
+    memory.getByText("No captions in this scope", { exact: true }),
+  ).toBeVisible();
+  await withinMemory(summarize, "Historical summary action");
+  await expect(summarize).toBeDisabled();
+  // No caption/model inference is created by this visual fixture. Restore the
+  // default scope and leave summarization as an explicit user action.
+  await withinMemory(source, "Memory source scope reset");
+  await source.selectOption({ label: "All sources" });
+  await withinMemory(time, "Memory time scope reset");
+  await time.selectOption({ label: "This session" });
+  await withinMemory(search, "Memory search reset");
+  await search.fill("");
+  await withinMemory(searchButton, "Memory Search reset");
+  await expect(searchButton).toBeDisabled();
+  await withinMemory(summarize, "Historical summary action reset");
 }
 async function pairPosition(
   a: Locator,
@@ -646,6 +743,7 @@ test("one workspace docks direct live sources and sidebar panes without restarti
       await reachable(
         page.getByRole("button", { name: "Operator", exact: true }),
       );
+      await memoryControls(page, firstId);
       await page.evaluate(() => {
         for (const node of document.querySelectorAll(
           ".dock-pane-content, .dashboard-dock-layout, .dock-viewport, .dock-board, main",
@@ -743,7 +841,7 @@ test("one workspace docks direct live sources and sidebar panes without restarti
     await assertContinuity();
     await reset();
     await page
-      .getByRole("combobox", { name: "Arrange New pane", exact: true })
+      .getByRole("combobox", { name: "Arrange Video memory", exact: true })
       .selectOption(`${firstId}/top`);
     await expect
       .poll(() => pairPosition(firstPane, extraPane, "top"))
@@ -914,7 +1012,7 @@ test("one workspace docks direct live sources and sidebar panes without restarti
     await reset();
 
     // Compact mode keeps docking order and scrolls one board, with usable controls.
-    await viewport(app, page, 820, 720);
+    await viewport(app, page, 800, 720);
     await page
       .getByRole("combobox", {
         name: "Arrange Workspace assistant",
@@ -939,6 +1037,7 @@ test("one workspace docks direct live sources and sidebar panes without restarti
     }
     await reachable(composer);
     await reachable(page.getByTestId("stop-all"));
+    await memoryControls(page, firstId);
     await expect(page.locator(".dock-board")).toHaveCount(1);
     expect(
       await page.evaluate(
@@ -1008,7 +1107,7 @@ test("four generated displays start in readable 2x2 panes and can scroll as one 
     ).toHaveCount(0);
     await extraBelowSources(page, ids);
     // Additional monitors occupy the former empty lower area; only the unused
-    // remainder stays available as New pane beneath the fitted source rows.
+    // remainder stays available as Video memory beneath the fitted source rows.
     await expect
       .poll(async () => {
         const extra = (await pane(page, "extra").boundingBox())!;

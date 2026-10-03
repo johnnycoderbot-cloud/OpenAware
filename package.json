@@ -1,6 +1,6 @@
 {
   "name": "openaware",
-  "version": "0.2.4",
+  "version": "0.3.0",
   "private": true,
   "description": "Live desktop and camera awareness with cooperating Observer and Operator AI roles",
   "license": "MIT",
@@ -15,6 +15,7 @@
     "check": "tsc --noEmit",
     "test": "tsx --test tests/*.test.ts",
     "test:desktop": "playwright test --config playwright.config.ts",
+    "cli": "node dist/cli.cjs",
     "package": "npm run build && electron-builder --win nsis --x64",
     "package:dir": "npm run build && electron-builder --dir",
     "validate:plan": "python scripts/validate_plan.py"
@@ -51,6 +52,12 @@
       "THIRD_PARTY_NOTICES.md"
     ],
     "asar": true,
+    "extraResources": [
+      {
+        "from": "dist/cli.cjs",
+        "to": "cli.cjs"
+      }
+    ],
     "win": {
       "icon": "assets/openaware-icon.ico",
       "target": [

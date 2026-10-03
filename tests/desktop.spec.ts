@@ -1,6 +1,8 @@
 import { _electron as electron, expect, test } from "@playwright/test";
 import { createServer } from "node:http";
-import { resolve } from "node:path";
+import { resolve, join, dirname } from "node:path";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 
 test("desktop runs synthetic preview, scopes local vision, stops acquisition, and rejects raw privileges", async () => {
   const requests: Record<string, unknown>[] = [];
@@ -59,12 +61,30 @@ test("desktop runs synthetic preview, scopes local vision, stops acquisition, an
   delete env.ELECTRON_RUN_AS_NODE;
   const app = await electron.launch({
     executablePath: process.env.OPENAWARE_EXECUTABLE,
-    args: process.env.OPENAWARE_EXECUTABLE ? [] : ["."],
+    args: [...(process.env.OPENAWARE_EXECUTABLE ? [] : ["."]), "--enable-cli"],
     cwd: resolve("."),
     env,
   });
   try {
     const page = await app.firstWindow();
+    const connectionPath = join(
+      await app.evaluate(({ app }) => app.getPath("userData")),
+      "local-api.json",
+    );
+    const cliPath = process.env.OPENAWARE_EXECUTABLE
+      ? join(dirname(process.env.OPENAWARE_EXECUTABLE), "resources", "cli.cjs")
+      : resolve("dist/cli.cjs");
+    const cli = async (...args: string[]) =>
+      JSON.parse(
+        (
+          await promisify(execFile)(
+            process.execPath,
+            [cliPath, "--connection", connectionPath, ...args],
+            { timeout: 28000, maxBuffer: 2 * 1024 * 1024 },
+          )
+        ).stdout,
+      );
+    expect((await cli("status")).sources).toEqual([]);
     await expect(
       page.getByRole("heading", { name: "Live workspace", exact: true }),
     ).toBeVisible();
@@ -105,6 +125,7 @@ test("desktop runs synthetic preview, scopes local vision, stops acquisition, an
       async () =>
         (await window.openAware!.invoke({ type: "state.get" })).sources[0],
     );
+    expect((await cli("sources")).sources[0].id).toBe(source.id);
     await page.evaluate(async (endpoint) => {
       await window.openAware!.invoke({
         type: "provider.discover",
@@ -199,7 +220,31 @@ test("desktop runs synthetic preview, scopes local vision, stops acquisition, an
       path: resolve("assets/prototype-desktop.png"),
       fullPage: false,
     });
-    await page.getByTestId("stop-all").click();
+    const found = await cli(
+      "captions",
+      "search",
+      "OPENAWARE",
+      "--sources",
+      source.id,
+    );
+    expect(found.matches.length).toBeGreaterThan(0);
+    expect(
+      (await cli("captions", "summary", "--sources", source.id)).historySummary
+        .status,
+    ).toMatch(/queued|running|completed/);
+    await expect
+      .poll(async () => (await cli("status")).historySummary.status)
+      .toBe("completed");
+    expect(
+      requests.some(
+        (request) =>
+          Array.isArray(request.input) &&
+          request.input.every(
+            (part: { type?: string }) => part.type === "text",
+          ),
+      ),
+    ).toBe(true);
+    await cli("watch", "stop");
     await expect
       .poll(() =>
         page.evaluate(

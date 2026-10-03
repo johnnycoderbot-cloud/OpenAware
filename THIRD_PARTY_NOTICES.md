@@ -2,6 +2,8 @@
 
 OpenAware original source is MIT licensed. Dependencies and the Electron/Chromium runtime retain their own notices. The lockfile pins the full dependency graph. External models and services are not distributed with this prototype.
 
+The local video workflows are inspired by the public NVIDIA Video Search and Summarization blueprint (https://github.com/NVIDIA-AI-Blueprints/video-search-and-summarization). They are an original OpenAware implementation, not a redistribution of NVIDIA VSS source, containers, model weights or assets. NVIDIA's project and other components retain their separate licenses and terms. No NVIDIA affiliation or VSS API compatibility is claimed.
+
 ## electron 44.5.1 (MIT)
 
 Copyright (c) Electron contributors

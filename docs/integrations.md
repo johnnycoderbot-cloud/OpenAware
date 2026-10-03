@@ -11,18 +11,18 @@ Verified: 2026-10-02. Recheck schemas and license requirements when implementing
 
 ## Integration matrix
 
-| Component | Evidence | Planned role | Boundary/gate |
-| --- | --- | --- | --- |
-| LM Studio local API | Documented model enumeration, vision flags, images, streamed output | Reference local vision backend | Test actual model, authentication, cancellation, storage, and contention |
-| Bionic model picker | Documented local, LM Link remote, and LM Studio cloud choices | User chooses conversation model in existing host | This is not a documented arbitrary OpenAI/OpenRouter picker or API selection-sync feed |
-| Bionic skills | Documented standard SKILL.md and optional supporting files | Teach observation workflows and command usage | A skill is guidance, not a background video transport |
-| Bionic MCP | Community author documents local stdio setup | Bridge for queries/control of monitoring service | Test image results, authorization, session identity, and notifications |
-| Bionic embedded dashboard | Unverified | Optional later presentation | No documented general panel API established by this research |
-| OBS Virtual Camera | Documented scene exposed as a webcam | Desktop/virtual desktop presented as a video source | Composite is one camera stream, not independent monitor identities |
-| Ollama | Documented image-capable chat API | Optional local provider | Probe chosen model capabilities and performance |
-| OpenRouter | Documented multimodal requests via vision models | Optional hosted model routing | Verify model/provider modality and retention settings |
-| OpenAI | Documented vision input and Realtime image events | Optional hosted vision/voice adapter | Images are supported; do not infer arbitrary continuous-video ingestion |
-| NVIDIA NIM | Documented image/video input for compatible models | Optional self-hosted or hosted inference adapter | Endpoint, model, GPU support, and license vary |
+| Component                 | Evidence                                                            | Planned role                                        | Boundary/gate                                                                          |
+| ------------------------- | ------------------------------------------------------------------- | --------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| LM Studio local API       | Documented model enumeration, vision flags, images, streamed output | Reference local vision backend                      | Test actual model, authentication, cancellation, storage, and contention               |
+| Bionic model picker       | Documented local, LM Link remote, and LM Studio cloud choices       | User chooses conversation model in existing host    | This is not a documented arbitrary OpenAI/OpenRouter picker or API selection-sync feed |
+| Bionic skills             | Documented standard SKILL.md and optional supporting files          | Teach observation workflows and command usage       | A skill is guidance, not a background video transport                                  |
+| Bionic MCP                | Community author documents local stdio setup                        | Bridge for queries/control of monitoring service    | Test image results, authorization, session identity, and notifications                 |
+| Bionic embedded dashboard | Unverified                                                          | Optional later presentation                         | No documented general panel API established by this research                           |
+| OBS Virtual Camera        | Documented scene exposed as a webcam                                | Desktop/virtual desktop presented as a video source | Composite is one camera stream, not independent monitor identities                     |
+| Ollama                    | Documented image-capable chat API                                   | Optional local provider                             | Probe chosen model capabilities and performance                                        |
+| OpenRouter                | Documented multimodal requests via vision models                    | Optional hosted model routing                       | Verify model/provider modality and retention settings                                  |
+| OpenAI                    | Documented vision input and Realtime image events                   | Optional hosted vision/voice adapter                | Images are supported; do not infer arbitrary continuous-video ingestion                |
+| NVIDIA NIM                | Documented image/video input for compatible models                  | Optional self-hosted or hosted inference adapter    | Endpoint, model, GPU support, and license vary                                         |
 
 ## LM Studio: reuse model discovery
 
@@ -67,6 +67,8 @@ Camera enumeration/device selection requires operating-system and Electron permi
 Prototype G-CAPTURE compares Electron/native capture options on Windows. Choose the smallest supported implementation based on measurable CPU, memory, latency, packaging, and permission behavior. A VR application named Virtual Desktop is not automatically a supported protocol; it may be observed through a compatible displayed window or virtual-camera source.
 
 ## Optional provider adapters
+
+The0.3 prototype adds [VSS-inspired local video workflows](local-video-workflows.md) on its existing LM Studio/Ollama adapters: bounded chronological masked images, rule evaluation, caption-text search, historical text summaries and an opt-in OpenAware CLI/skill. NVIDIA's VSS CLI still requires a deployed VSS backend; it is not installed here. No NVIDIA code, weights, CUDA/DeepStream runtime, vector search or VSS server compatibility is bundled. Multi-image capability and throughput remain model-specific; the UI retains capture intervals and delays. See [the NVIDIA source](https://github.com/NVIDIA-AI-Blueprints/video-search-and-summarization) and the local implementation ledger for evidence.
 
 **Ollama:** REST chat accepts base64 images in a message `images` array for vision models. Keep the adapter model-specific; text-only models cannot analyze a picture. [Ollama vision](https://docs.ollama.com/capabilities/vision)
 

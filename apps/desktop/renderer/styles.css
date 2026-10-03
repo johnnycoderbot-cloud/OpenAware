@@ -4042,6 +4042,16 @@ h2 {
 .dashboard-dock-layout .source-pane .source-bottom button:focus-visible {
   outline-offset: -2px;
 }
+.source-bottom .source-evidence {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+}
+.source-bottom > div {
+  flex-shrink: 0;
+}
 .dashboard-dock-layout .source-pane .mask-warning {
   position: absolute;
   bottom: 32px;
@@ -4123,4 +4133,238 @@ h2 {
     height: auto;
     aspect-ratio: var(--source-aspect, 1.7777778);
   }
+}
+
+/* Caption memory and rule controls use the existing panes without inner cards. */
+.video-memory {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 166px;
+  min-width: 0;
+  padding: 7px 9px;
+  gap: 6px;
+  font-size: 12px;
+}
+.memory-toolbar,
+.memory-scope,
+.memory-time-inputs {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+  flex-shrink: 0;
+}
+.memory-toolbar input,
+.memory-scope select,
+.memory-time-inputs input,
+.semantic-rule-form input:not([type="checkbox"]),
+.semantic-rule-form textarea {
+  min-width: 0;
+  color: #d5e4f2;
+  background: #0d1925;
+  border: 1px solid #33495c;
+  border-radius: 4px;
+  padding: 4px 7px;
+  font-size: 12px;
+  color-scheme: dark;
+}
+.memory-toolbar input {
+  flex: 1 1 100px;
+  width: 0;
+  height: 28px;
+}
+.memory-toolbar .icon-button {
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  min-height: 28px;
+  padding: 0;
+}
+.memory-scope select {
+  flex: 1 1 100px;
+  max-width: 100%;
+  height: 26px;
+  font-size: 11px;
+}
+.memory-scope .text-button {
+  min-height: 26px;
+  padding: 2px 0;
+  font-size: 11px;
+}
+.memory-time-inputs input {
+  flex: 1 1 150px;
+  width: 0;
+  max-width: 100%;
+}
+.memory-results {
+  flex: 1;
+  overflow: auto;
+  min-width: 0;
+  min-height: 46px;
+}
+.memory-caption-list,
+.semantic-rule-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.memory-caption-row,
+.memory-summary {
+  padding: 7px 0;
+  border-bottom: 1px solid #293d4f;
+  overflow-wrap: anywhere;
+}
+.memory-caption-row p,
+.memory-summary p {
+  margin: 3px 0;
+  font-size: 12px;
+}
+.memory-record-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 3px 8px;
+  color: #91aac0;
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+.memory-record-meta strong {
+  color: #c8dcec;
+  font-weight: 500;
+}
+.memory-summary strong {
+  color: #8ebdff;
+}
+.memory-empty,
+.memory-error {
+  padding: 6px 0;
+  font-size: 11px;
+  color: #93aac0;
+}
+.memory-error {
+  color: #ffc085;
+}
+.pipeline-panel {
+  align-self: start;
+  min-width: 0;
+  padding: 12px;
+  font-size: 12px;
+}
+.pipeline-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.pipeline-heading h2 {
+  font-size: 16px;
+}
+.pipeline-heading h3 {
+  font-size: 13px;
+}
+.temporal-setting {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.temporal-setting input,
+.rule-source-options input,
+.semantic-rule-actions input {
+  accent-color: #348af0;
+}
+.pipeline-note {
+  display: block;
+  margin: 5px 0 15px;
+  font-size: 10px;
+  color: #92aabd;
+}
+.semantic-rule-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 7px;
+  padding: 8px 0;
+  border-top: 1px solid #293d4f;
+  overflow-wrap: anywhere;
+}
+.semantic-rule-row p {
+  font-size: 11px;
+  margin: 4px 0;
+}
+.semantic-rule-actions {
+  display: flex;
+  align-items: flex-start;
+  gap: 5px;
+}
+.semantic-rule-actions .text-button {
+  min-height: 26px;
+  font-size: 11px;
+}
+.semantic-rule-actions .icon-button {
+  width: 26px;
+  height: 26px;
+  min-width: 26px;
+  min-height: 26px;
+  padding: 0;
+}
+.semantic-rule-actions input {
+  margin-top: 7px;
+}
+.rule-status {
+  color: #91aac0;
+  font-size: 10px;
+  margin-left: 7px;
+}
+.rule-status.pending {
+  color: #f5cc7b;
+}
+.rule-status.active,
+.event-icon.alert,
+.event-type.alert {
+  color: #ffbb75;
+}
+.rule-status.clear {
+  color: #7bdcaa;
+}
+.semantic-rule-form {
+  display: grid;
+  min-width: 0;
+  gap: 7px;
+  margin-top: 10px;
+}
+.semantic-rule-form input:not([type="checkbox"]),
+.semantic-rule-form textarea {
+  width: 100%;
+  max-width: 100%;
+}
+.semantic-rule-form textarea {
+  resize: vertical;
+  min-height: 56px;
+  max-height: 150px;
+}
+.rule-source-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+}
+.rule-source-options label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+}
+.semantic-rule-save {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.semantic-rule-save .button {
+  min-height: 28px;
+  padding: 5px 9px;
+  font-size: 12px;
+}
+.video-memory button:focus-visible {
+  outline-offset: -2px;
 }

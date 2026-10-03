@@ -14,6 +14,7 @@ import {
 } from "../packages/providers/src/index.js";
 import { validateImage, parsePlan } from "../packages/core/src/index.js";
 import type { Frame } from "../packages/contracts/src/index.js";
+import type { TextSummaryInput } from "../packages/providers/src/index.js";
 
 const png =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aN/8AAAAASUVORK5CYII=";
@@ -58,6 +59,153 @@ function json(response: ServerResponse, value: unknown) {
   response.setHeader("content-type", "application/json");
   response.end(JSON.stringify(value));
 }
+
+const historyInput = (): TextSummaryInput => ({
+  modelId: "vision",
+  question: "What changed?",
+  captions: [
+    {
+      id: randomUUID(),
+      sourceNames: ["Monitor 1"],
+      capturedAt: 10000,
+      captureStartAt: 8000,
+      summary: "A blue circle moved to the right.",
+    },
+  ],
+});
+
+test("historical summaries send only bounded text with no storage or tools to LM Studio", async (t) => {
+  let received: Record<string, any> | undefined;
+  const endpoint = await server(t, async (request, response) => {
+    assert.equal(request.url, "/api/v1/chat");
+    received = await body(request);
+    json(response, {
+      output: [
+        { type: "message", content: "The recorded circle moved right." },
+      ],
+    });
+  });
+  const provider = createProvider({ provider: "lmstudio", endpoint });
+  assert.equal(
+    await provider.summarize!(historyInput(), new AbortController().signal),
+    "The recorded circle moved right.",
+  );
+  assert.deepEqual(
+    received?.input.map((part: any) => part.type),
+    ["text"],
+  );
+  assert.match(received?.input[0].content, /historical caption/);
+  assert.match(received?.input[0].content, /8000/);
+  assert.equal(received?.store, false);
+  assert.equal(received?.max_output_tokens, 512);
+  assert.deepEqual(received?.integrations, []);
+  assert.doesNotMatch(
+    JSON.stringify(received),
+    /data:image|previous_response_id/,
+  );
+});
+
+test("Ollama discovery skips declared cloud routes and temporal requests use JSON without thinking", async (t) => {
+  const shown: string[] = [];
+  let received: Record<string, any> | undefined;
+  const endpoint = await server(t, async (request, response) => {
+    if (request.url === "/api/tags")
+      return json(response, {
+        models: [
+          { name: "vision" },
+          { name: "unavailable-cloud", remote_host: "https://ollama.com" },
+        ],
+      });
+    if (request.url === "/api/show") {
+      const input = await body(request);
+      shown.push(input.model);
+      if (input.model === "unavailable-cloud") {
+        response.writeHead(410);
+        response.end();
+        return;
+      }
+      return json(response, { capabilities: ["vision", "thinking"] });
+    }
+    received = await body(request);
+    json(response, {
+      done: true,
+      message: { content: '{"summary":"Observed"}' },
+    });
+  });
+  const provider = createProvider({ provider: "ollama", endpoint });
+  assert.deepEqual(
+    (await provider.discover(new AbortController().signal)).map(
+      (m) => m.vision,
+    ),
+    ["declared", "unsupported"],
+  );
+  assert.deepEqual(shown, ["vision"]);
+  await provider.analyze(
+    {
+      modelId: "vision",
+      frames: [frame(), frame()],
+      question: "Describe this sequence",
+      mode: "observe",
+      structured: true,
+    },
+    new AbortController().signal,
+  );
+  assert.equal(received?.format, "json");
+  assert.equal(received?.think, false);
+  assert.equal(received?.messages[1].images.length, 2);
+  await provider.summarize!(historyInput(), new AbortController().signal);
+  assert.equal(received?.think, false);
+  assert.equal(received?.format, undefined);
+  assert.equal(received?.messages[1].images, undefined);
+  assert.equal(received?.tools, undefined);
+});
+
+test("historical summaries reject remote proxies, invalid evidence and tool responses", async (t) => {
+  let chats = 0;
+  const endpoint = await server(t, async (request, response) => {
+    if (request.url === "/api/show")
+      return json(response, { remote_model: "elsewhere" });
+    chats++;
+    json(response, {
+      output: [{ type: "message", content: "Fine" }, { type: "tool_call" }],
+    });
+  });
+  const ollama = createProvider({ provider: "ollama", endpoint });
+  await assert.rejects(
+    ollama.summarize!(historyInput(), new AbortController().signal),
+    /remote model/,
+  );
+  assert.equal(chats, 0);
+  const lm = createProvider({ provider: "lmstudio", endpoint });
+  for (const captions of [
+    [],
+    Array.from({ length: 26 }, () => historyInput().captions[0]),
+    [{ ...historyInput().captions[0], captureStartAt: 10001 }],
+    [{ ...historyInput().captions[0], summary: "x".repeat(2001) }],
+    Array.from({ length: 25 }, () => ({
+      ...historyInput().captions[0],
+      summary: "x".repeat(1500),
+    })),
+  ]) {
+    await assert.rejects(
+      lm.summarize!(
+        { ...historyInput(), captions },
+        new AbortController().signal,
+      ),
+    );
+  }
+  assert.equal(chats, 0);
+  await assert.rejects(
+    lm.summarize!(historyInput(), new AbortController().signal),
+    /unsupported tool/,
+  );
+  const aborted = new AbortController();
+  aborted.abort();
+  await assert.rejects(
+    lm.summarize!(historyInput(), aborted.signal),
+    /cancelled/,
+  );
+});
 
 test("provider origins reject remote addresses, credentials, encoded alternate hosts and URL paths", () => {
   for (const value of [

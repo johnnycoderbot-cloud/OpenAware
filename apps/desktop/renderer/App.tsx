@@ -29,6 +29,7 @@ import {
   Power,
   Radio,
   RefreshCw,
+  Search,
   Send,
   Settings2,
   ShieldCheck,
@@ -41,11 +42,13 @@ import {
 import {
   initialSnapshot,
   type CaptureChoice,
+  type CaptionSearchResult,
   type Command,
   type DesktopState,
   type Frame,
   type Mask,
   type OpenAwareBridge,
+  type Observation,
   type ProviderKind,
   type Snapshot,
   type Source,
@@ -81,6 +84,11 @@ const age = (at?: number) =>
   !at
     ? "No sample"
     : `${Math.max(0, Math.round((Date.now() - at) / 1000))}s ago`;
+const analyzedWindow = (observation: Observation) => {
+  const start = observation.captureStartAt ?? observation.capturedAt;
+  const frames = observation.frameCount ?? 1;
+  return `${time(start)}${start !== observation.capturedAt ? `–${time(observation.capturedAt)}` : ""} · ${frames} frame${frames === 1 ? "" : "s"}`;
+};
 
 export function App() {
   const [snapshot, setSnapshot] = useState<Snapshot>(initialSnapshot);
@@ -579,8 +587,17 @@ export function App() {
                     </DockPane>
                   );
                 })}
-                <DockPane id="extra" title="New pane">
-                  {null}
+                <DockPane
+                  id="extra"
+                  title="Video memory"
+                  icon={<Clock3 size={17} />}
+                >
+                  <VideoMemory
+                    snapshot={snapshot}
+                    run={run}
+                    pending={pending}
+                    report={report}
+                  />
                 </DockPane>
                 <DockPane
                   id="assistant"
@@ -739,8 +756,8 @@ export function App() {
                   <Terminal size={32} />
                   <h3>A fresh session</h3>
                   <p>
-                    Source changes, observations, motion alerts, and action
-                    results appear here.
+                    Source changes, observations, motion and semantic alerts,
+                    and action results appear here.
                   </p>
                 </div>
               )}
@@ -1041,10 +1058,17 @@ function SourceTile({
       )}
       <div className="source-bottom">
         <span
-          title={`AI evidence ${observation ? age(observation.capturedAt) : "not sampled"}`}
+          className="source-evidence"
+          title={
+            observation
+              ? `Analyzed ${analyzedWindow(observation)} · ${age(observation.capturedAt)} · ${observation.status}`
+              : "AI not sampled"
+          }
         >
           <Eye size={13} />
-          {observation ? age(observation.capturedAt) : "—"}
+          {observation
+            ? `${observation.frameCount ?? 1}f · ${Math.max(0, (observation.capturedAt - (observation.captureStartAt ?? observation.capturedAt)) / 1000).toFixed(1)}s · ${age(observation.capturedAt)}`
+            : "—"}
         </span>
         <div>
           <button
@@ -1180,7 +1204,8 @@ function Conversation({
             <p>{message.text}</p>
             {message.observation && (
               <span className="evidence-caption">
-                Evidence {age(message.observation.capturedAt)} ·{" "}
+                Analyzed {analyzedWindow(message.observation)} ·{" "}
+                {age(message.observation.capturedAt)} ·{" "}
                 {message.observation.status}
               </span>
             )}
@@ -1276,6 +1301,543 @@ function Conversation({
           >
             <Send size={17} />
           </button>
+        </div>
+      </form>
+    </section>
+  );
+}
+
+function VideoMemory({
+  snapshot,
+  run,
+  pending,
+  report,
+}: {
+  snapshot: Snapshot;
+  run: (command: Command, label?: string) => Promise<Snapshot | undefined>;
+  pending: string[];
+  report: (message: string) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [sourceId, setSourceId] = useState("");
+  const [range, setRange] = useState("session");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const [results, setResults] = useState<CaptionSearchResult>();
+  const [searching, setSearching] = useState(false);
+  const [error, setError] = useState<string>();
+  const request = useRef(0);
+  useEffect(
+    () => () => {
+      request.current += 1;
+    },
+    [],
+  );
+  useEffect(() => {
+    if (
+      sourceId &&
+      !snapshot.sources.some((source) => source.id === sourceId)
+    ) {
+      setSourceId("");
+      request.current += 1;
+      setResults(undefined);
+      setSearching(false);
+    }
+  }, [sourceId, snapshot.sources]);
+  const resetSearch = () => {
+    request.current += 1;
+    setResults(undefined);
+    setSearching(false);
+    setError(undefined);
+  };
+  const scope = () => {
+    const start =
+      range === "custom" && from
+        ? new Date(from).getTime()
+        : range === "5" || range === "15"
+          ? Date.now() - Number(range) * 60_000
+          : undefined;
+    const end = range === "custom" && to ? new Date(to).getTime() : undefined;
+    if (
+      (start !== undefined && (!Number.isFinite(start) || start < 0)) ||
+      (end !== undefined && (!Number.isFinite(end) || end < 0)) ||
+      (start !== undefined && end !== undefined && start > end)
+    )
+      throw new Error("Choose a valid historical time range.");
+    return {
+      ...(sourceId ? { sourceIds: [sourceId] } : {}),
+      ...(start !== undefined ? { from: start } : {}),
+      ...(end !== undefined ? { to: end } : {}),
+    };
+  };
+  let filters: ReturnType<typeof scope> | undefined;
+  try {
+    filters = scope();
+  } catch {
+    /* Invalid custom scope has no displayed matches. */
+  }
+  const matchesScope = (
+    observation: Pick<
+      Observation,
+      "sourceIds" | "capturedAt" | "captureStartAt"
+    >,
+  ) =>
+    !!filters &&
+    (!sourceId || observation.sourceIds.every((id) => id === sourceId)) &&
+    (filters.from === undefined || observation.capturedAt >= filters.from) &&
+    (filters.to === undefined ||
+      (observation.captureStartAt ?? observation.capturedAt) <= filters.to);
+  const retained = new Set(
+    snapshot.observations.map((observation) => observation.id),
+  );
+  const captions = (
+    results
+      ? results.matches
+          .map((match) => match.observation)
+          .filter((observation) => retained.has(observation.id))
+      : snapshot.observations
+  )
+    .filter(matchesScope)
+    .sort((a, b) => b.capturedAt - a.capturedAt)
+    .slice(0, 50);
+  const available = snapshot.observations.filter(matchesScope).length;
+  const summary = snapshot.historySummary;
+  async function search(event: React.FormEvent) {
+    event.preventDefault();
+    if (!window.openAware || !query.trim()) return;
+    const revision = ++request.current;
+    setSearching(true);
+    setError(undefined);
+    try {
+      const found = await window.openAware.invoke<CaptionSearchResult>({
+        type: "history.search",
+        query: query.trim(),
+        ...scope(),
+        limit: 50,
+      });
+      if (revision === request.current) setResults(found);
+    } catch (failure) {
+      if (revision === request.current)
+        setError(failure instanceof Error ? failure.message : String(failure));
+    } finally {
+      if (revision === request.current) setSearching(false);
+    }
+  }
+  async function summarize() {
+    try {
+      await run({ type: "history.summarize", ...scope() });
+    } catch (failure) {
+      report(failure instanceof Error ? failure.message : String(failure));
+    }
+  }
+  return (
+    <section className="video-memory" aria-label="Video memory">
+      <form className="memory-toolbar" onSubmit={(event) => void search(event)}>
+        <input
+          type="search"
+          aria-label="Search captions"
+          placeholder="Search captions…"
+          maxLength={512}
+          value={query}
+          onChange={(event) => {
+            setQuery(event.target.value);
+            resetSearch();
+          }}
+        />
+        <button
+          className="icon-button"
+          aria-label="Search captions"
+          title="Search captions"
+          disabled={!window.openAware || !query.trim() || searching}
+        >
+          <Search size={15} />
+        </button>
+      </form>
+      <div className="memory-scope">
+        <select
+          aria-label="Memory source"
+          value={sourceId}
+          onChange={(event) => {
+            setSourceId(event.target.value);
+            resetSearch();
+          }}
+        >
+          <option value="">All sources</option>
+          {snapshot.sources.map((source) => (
+            <option key={source.id} value={source.id}>
+              {source.name}
+            </option>
+          ))}
+        </select>
+        <select
+          aria-label="Memory time range"
+          value={range}
+          onChange={(event) => {
+            setRange(event.target.value);
+            resetSearch();
+          }}
+        >
+          <option value="session">This session</option>
+          <option value="5">Last 5 minutes</option>
+          <option value="15">Last 15 minutes</option>
+          <option value="custom">Custom range</option>
+        </select>
+        <button
+          className="text-button"
+          title="Summarize the selected historical source and time scope"
+          disabled={
+            !window.openAware ||
+            !available ||
+            !filters ||
+            snapshot.session === "stopped" ||
+            snapshot.binding.status !== "verified" ||
+            pending.includes("history.summarize") ||
+            summary?.status === "queued" ||
+            summary?.status === "running"
+          }
+          onClick={() => void summarize()}
+        >
+          Summarize history
+        </button>
+      </div>
+      {range === "custom" && (
+        <div className="memory-time-inputs">
+          <input
+            type="datetime-local"
+            step="1"
+            aria-label="Memory from"
+            value={from}
+            onChange={(event) => {
+              setFrom(event.target.value);
+              resetSearch();
+            }}
+          />
+          <input
+            type="datetime-local"
+            step="1"
+            aria-label="Memory to"
+            value={to}
+            onChange={(event) => {
+              setTo(event.target.value);
+              resetSearch();
+            }}
+          />
+        </div>
+      )}
+      {error && (
+        <p className="memory-error" role="alert">
+          {error}
+        </p>
+      )}
+      <div className="memory-results">
+        {summary && matchesScope(summary) && (
+          <section
+            className="memory-summary"
+            aria-label="Historical summary"
+            aria-live="polite"
+          >
+            <div className="memory-record-meta">
+              <strong>Historical summary</strong>
+              <span>{summary.status}</span>
+            </div>
+            <p>
+              {summary.summary ||
+                summary.error ||
+                (summary.status === "queued" || summary.status === "running"
+                  ? "Summarizing captions…"
+                  : summary.status === "failed"
+                    ? "Summary failed"
+                    : summary.status === "completed"
+                      ? "No summary text"
+                      : "Summary cancelled")}
+            </p>
+            <span className="memory-record-meta">
+              {summary.sourceNames.join(", ")} · {time(summary.captureStartAt)}–
+              {time(summary.capturedAt)} · {summary.observationIds.length}{" "}
+              captions · {summary.modelId}
+            </span>
+          </section>
+        )}
+        {captions.length ? (
+          <ol className="memory-caption-list" aria-label="Historical captions">
+            {captions.map((observation) => (
+              <li
+                className="memory-caption-row"
+                key={observation.id}
+                data-observation-id={observation.id}
+              >
+                <div className="memory-record-meta">
+                  <strong>{observation.sourceNames.join(", ")}</strong>
+                  <span>
+                    {analyzedWindow(observation)} ·{" "}
+                    {age(observation.capturedAt)}
+                  </span>
+                </div>
+                <p>{observation.summary}</p>
+                <span className="memory-record-meta">
+                  {observation.provider} · {observation.modelId}
+                  {observation.ruleEvidence
+                    ?.map(
+                      (evidence) =>
+                        ` · ${snapshot.pipeline.rules.find((rule) => rule.id === evidence.ruleId && rule.revision === evidence.ruleRevision)?.name || "Rule"} r${evidence.ruleRevision}: ${evidence.verdict}`,
+                    )
+                    .join("")}
+                </span>
+              </li>
+            ))}
+          </ol>
+        ) : (
+          <p className="memory-empty">
+            {searching ? "Searching captions…" : "No captions in this scope"}
+          </p>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function PipelineSettings({
+  snapshot,
+  run,
+  pending,
+}: {
+  snapshot: Snapshot;
+  run: (command: Command, label?: string) => Promise<Snapshot | undefined>;
+  pending: string[];
+}) {
+  const [editing, setEditing] = useState<string>();
+  const [name, setName] = useState("");
+  const [condition, setCondition] = useState("");
+  const [sources, setSources] = useState<string[]>([]);
+  const saving = pending.includes("rule.save");
+  const reset = () => {
+    setEditing(undefined);
+    setName("");
+    setCondition("");
+    setSources([]);
+  };
+  useEffect(() => {
+    setSources((selected) =>
+      selected.every((id) =>
+        snapshot.sources.some((source) => source.id === id),
+      )
+        ? selected
+        : selected.filter((id) =>
+            snapshot.sources.some((source) => source.id === id),
+          ),
+    );
+  }, [snapshot.sources]);
+  useEffect(() => {
+    if (editing && !snapshot.pipeline.rules.some((rule) => rule.id === editing))
+      reset();
+  }, [editing, snapshot.pipeline.rules]);
+  async function save(event: React.FormEvent) {
+    event.preventDefault();
+    const result = await run(
+      editing
+        ? {
+            type: "rule.update",
+            ruleId: editing,
+            patch: {
+              name: name.trim(),
+              condition: condition.trim(),
+              sourceIds: sources,
+            },
+          }
+        : {
+            type: "rule.add",
+            name: name.trim(),
+            condition: condition.trim(),
+            sourceIds: sources,
+          },
+      "rule.save",
+    );
+    if (result) reset();
+  }
+  return (
+    <section className="panel pipeline-panel" aria-label="Monitoring pipeline">
+      <div className="pipeline-heading">
+        <h2>Monitoring</h2>
+        <span className="muted small">Local</span>
+      </div>
+      <label className="temporal-setting">
+        <input
+          type="checkbox"
+          checked={snapshot.pipeline.temporalEnabled}
+          disabled={!window.openAware || pending.includes("pipeline.configure")}
+          onChange={(event) =>
+            void run({
+              type: "pipeline.configure",
+              temporalEnabled: event.target.checked,
+            })
+          }
+        />{" "}
+        Temporal monitoring
+      </label>
+      <span className="pipeline-note">
+        {snapshot.pipeline.temporalEnabled
+          ? "Up to 3 frames / 4 seconds per source"
+          : "One frame per observation"}
+      </span>
+      <div className="pipeline-heading">
+        <h3>Semantic rules</h3>
+        <span className="muted small">{snapshot.pipeline.rules.length}/8</span>
+      </div>
+      {snapshot.pipeline.rules.length > 0 && (
+        <ul className="semantic-rule-list">
+          {snapshot.pipeline.rules.map((rule) => (
+            <li key={rule.id} className="semantic-rule-row">
+              <div>
+                <strong>{rule.name}</strong>
+                <span className={`rule-status ${rule.status}`}>
+                  {rule.enabled ? rule.status : "disabled"}
+                </span>
+                <p>{rule.condition}</p>
+                <span className="memory-record-meta">
+                  {rule.sourceIds
+                    .map(
+                      (id) =>
+                        snapshot.sources.find((source) => source.id === id)
+                          ?.name || "Removed source",
+                    )
+                    .join(", ")}{" "}
+                  ·{" "}
+                  {rule.lastEvaluatedAt
+                    ? age(rule.lastEvaluatedAt)
+                    : "Not evaluated"}
+                </span>
+              </div>
+              <div className="semantic-rule-actions">
+                <input
+                  type="checkbox"
+                  aria-label={`Enable ${rule.name}`}
+                  checked={rule.enabled}
+                  disabled={
+                    !window.openAware ||
+                    pending.includes(`rule.toggle/${rule.id}`)
+                  }
+                  onChange={(event) =>
+                    void run(
+                      {
+                        type: "rule.update",
+                        ruleId: rule.id,
+                        patch: { enabled: event.target.checked },
+                      },
+                      `rule.toggle/${rule.id}`,
+                    )
+                  }
+                />
+                <button
+                  className="text-button"
+                  aria-label={`Edit ${rule.name}`}
+                  disabled={saving}
+                  onClick={() => {
+                    setEditing(rule.id);
+                    setName(rule.name);
+                    setCondition(rule.condition);
+                    setSources(
+                      rule.sourceIds.filter((id) =>
+                        snapshot.sources.some((source) => source.id === id),
+                      ),
+                    );
+                  }}
+                >
+                  Edit
+                </button>
+                <button
+                  className="icon-button"
+                  aria-label={`Remove rule ${rule.name}`}
+                  disabled={
+                    !window.openAware ||
+                    pending.includes(`rule.remove/${rule.id}`)
+                  }
+                  onClick={() =>
+                    void run(
+                      { type: "rule.remove", ruleId: rule.id },
+                      `rule.remove/${rule.id}`,
+                    )
+                  }
+                >
+                  <Trash2 size={14} />
+                </button>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+      <form
+        className="semantic-rule-form"
+        onSubmit={(event) => void save(event)}
+      >
+        <input
+          aria-label="Rule name"
+          placeholder="Rule name"
+          maxLength={80}
+          required
+          disabled={saving}
+          value={name}
+          onChange={(event) => setName(event.target.value)}
+        />
+        <textarea
+          aria-label="Rule condition"
+          placeholder="Describe the condition to watch…"
+          maxLength={512}
+          rows={2}
+          required
+          disabled={saving}
+          value={condition}
+          onChange={(event) => setCondition(event.target.value)}
+        />
+        <div
+          className="rule-source-options"
+          role="group"
+          aria-label="Rule sources"
+        >
+          {snapshot.sources.map((source) => (
+            <label key={source.id}>
+              <input
+                type="checkbox"
+                checked={sources.includes(source.id)}
+                disabled={saving}
+                onChange={(event) =>
+                  setSources((selected) =>
+                    event.target.checked
+                      ? [...selected, source.id]
+                      : selected.filter((id) => id !== source.id),
+                  )
+                }
+              />
+              {source.name}
+            </label>
+          ))}
+          {!snapshot.sources.length && (
+            <span className="muted small">Add a source to create a rule</span>
+          )}
+        </div>
+        <div className="semantic-rule-save">
+          <button
+            className="button secondary"
+            disabled={
+              !window.openAware ||
+              !name.trim() ||
+              !condition.trim() ||
+              !sources.length ||
+              saving ||
+              (!editing && snapshot.pipeline.rules.length >= 8)
+            }
+          >
+            {editing ? "Save rule" : "Add rule"}
+          </button>
+          {editing && (
+            <button
+              type="button"
+              className="text-button"
+              disabled={saving}
+              onClick={reset}
+            >
+              Cancel edit
+            </button>
+          )}
         </div>
       </form>
     </section>
@@ -1522,59 +2084,7 @@ function Connections({
           </span>
         </div>
       </section>
-      <aside className="connection-guide panel">
-        <span className="guide-symbol">
-          <Radio size={28} />
-        </span>
-        <h2>
-          One workspace.
-          <br />
-          Your intelligence.
-        </h2>
-        <p>
-          OpenAware watches through selected sources. Your model interprets the
-          frames.
-        </p>
-        <ol>
-          <li>
-            <span>1</span>
-            <div>
-              <strong>Start your model server</strong>
-              <p>Enable the local server in LM Studio, or start Ollama.</p>
-            </div>
-          </li>
-          <li>
-            <span>2</span>
-            <div>
-              <strong>Select a vision model</strong>
-              <p>
-                Models must accept images. Text-only models cannot see your
-                sources.
-              </p>
-            </div>
-          </li>
-          <li>
-            <span>3</span>
-            <div>
-              <strong>Verify, then watch</strong>
-              <p>
-                A synthetic test checks the image path. Switching models pauses
-                AI and requires explicit resume.
-              </p>
-            </div>
-          </li>
-        </ol>
-        <div className="guide-note">
-          <LockKeyhole size={17} />
-          <p>
-            There is no automatic cloud fallback. This build connects directly
-            to local LM Studio and Ollama servers.
-          </p>
-        </div>
-        <span className="small muted">
-          Bionic, cloud providers, and voice are planned integrations.
-        </span>
-      </aside>
+      <PipelineSettings snapshot={snapshot} run={run} pending={pending} />
     </div>
   );
 }
