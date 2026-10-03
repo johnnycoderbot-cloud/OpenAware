@@ -45,6 +45,22 @@ export function publicStatus(state: Snapshot) {
     epoch: state.epoch,
     busy: state.busy,
     queueSize: state.queueSize,
+    activeAgentId: state.activeAgentId,
+    agents: (state.agents ?? []).map((agent) => ({
+      id: agent.id,
+      name: agent.name,
+      role: agent.role,
+      revision: agent.revision,
+      sourceIds: agent.sourceIds,
+      session: agent.session,
+      busy: agent.busy,
+      queueSize: agent.queueSize,
+      binding: {
+        provider: agent.binding.provider,
+        modelId: agent.binding.modelId,
+        status: agent.binding.status,
+      },
+    })),
     binding: {
       provider: state.binding.provider,
       modelId: state.binding.modelId,

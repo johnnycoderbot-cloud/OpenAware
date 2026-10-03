@@ -98,6 +98,10 @@ test("CLI whitelist denies acquisition, pixels, provider and automation commands
     return initialSnapshot();
   });
   for (const type of [
+    "agent.add",
+    "agent.update",
+    "agent.remove",
+    "agent.select",
     "source.add",
     "source.frame",
     "provider.configure",
@@ -138,6 +142,45 @@ test("CLI whitelist denies acquisition, pixels, provider and automation commands
     (await fetch(`${f.url}/v1/status?token=oops`, { headers: f.auth })).status,
     404,
   );
+});
+test("CLI agent metadata omits endpoints, conversations, plans and media references", () => {
+  const state = initialSnapshot();
+  const { version, sources, agents, activeAgentId, ...engine } = state;
+  const agentId = randomUUID();
+  state.activeAgentId = agentId;
+  state.agents = [
+    {
+      ...engine,
+      id: agentId,
+      name: "Fixture observer",
+      role: "observer",
+      revision: 2,
+      sourceIds: [],
+      binding: {
+        ...engine.binding,
+        endpoint: "http://127.0.0.1:1234/private-endpoint",
+      },
+      chat: [
+        {
+          id: randomUUID(),
+          role: "user",
+          text: "private-agent-conversation",
+          at: Date.now(),
+          sourceIds: [],
+        },
+      ],
+    },
+  ];
+  const status = publicStatus(state);
+  assert.equal(status.activeAgentId, agentId);
+  assert.equal(status.agents[0].name, "Fixture observer");
+  assert.deepEqual(status.agents[0].sourceIds, []);
+  assert.doesNotMatch(
+    JSON.stringify(status),
+    /private-endpoint|private-agent-conversation/,
+  );
+  assert.equal("pendingPlan" in status.agents[0], false);
+  assert.equal("models" in status.agents[0], false);
 });
 
 test("local API bounds request bodies, concurrency, timeout and redacts backend errors", async (t) => {

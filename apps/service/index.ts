@@ -1,7 +1,7 @@
-import { createService } from "./engine.js";
+import { createAgentService } from "./agents.js";
 import { commandSchema } from "../../packages/contracts/src/index.js";
 
-const service = createService({
+const service = createAgentService({
   onState(state) {
     if (process.connected) process.send?.({ type: "state", state });
   },

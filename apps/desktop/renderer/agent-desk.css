@@ -6,7 +6,7 @@
   min-width: 0;
   min-height: 170px;
   color: var(--text, #edf2f8);
-  overflow: hidden;
+  overflow: auto hidden;
   container-type: inline-size;
   background: radial-gradient(ellipse at 50% 87%, #16263a70, transparent 68%);
 }
@@ -24,6 +24,54 @@
   min-height: inherit;
   padding: 0 6%;
 }
+.agent-desk[data-seats="3"] .agent-desk-seats,
+.agent-desk[data-seats="4"] .agent-desk-seats {
+  min-width: 570px;
+  padding-inline: 2%;
+}
+.agent-desk[data-seats="4"] .agent-desk-seats {
+  min-width: 740px;
+}
+.agent-desk[data-seats="3"] .agent-desk-worktop {
+  min-width: 570px;
+}
+.agent-desk[data-seats="4"] .agent-desk-worktop {
+  min-width: 740px;
+}
+.agent-desk-seat[data-selected="true"] .agent-desk-role {
+  color: #86caff;
+}
+.agent-desk-select {
+  border: 0;
+  background: transparent;
+  padding: 2px 0;
+  text-align: left;
+}
+.agent-desk-seat-tools {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+}
+.agent-desk-role-label {
+  font-size: 10px;
+  color: #9cb5cc;
+}
+.agent-desk-seat-tools .text-button {
+  font-size: 10px;
+  min-height: 24px;
+  gap: 4px;
+  white-space: nowrap;
+}
+.agent-desk-watch {
+  position: absolute;
+  top: 82px;
+  left: 0;
+  font-size: 10px;
+  min-height: 25px;
+  gap: 4px;
+}
 .agent-desk-seat {
   position: relative;
   min-width: 0;
@@ -32,7 +80,7 @@
 .agent-desk-seat-info {
   position: absolute;
   z-index: 2;
-  top: 17%;
+  top: 7%;
   left: 10%;
   right: 10%;
   display: grid;
@@ -44,7 +92,7 @@
   align-items: center;
   gap: 7px;
   min-width: 0;
-  min-height: 24px;
+  min-height: 20px;
 }
 .agent-desk-role,
 .agent-desk-model,
@@ -99,6 +147,11 @@
   color: #eca2a2;
 }
 .agent-desk-configure {
+  position: absolute;
+  z-index: 3;
+  bottom: 10px;
+  left: 50%;
+  transform: translateX(-50%);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -107,7 +160,6 @@
   width: auto;
   max-width: 140px;
   height: 28px;
-  margin-left: auto;
   padding: 0 7px;
   border: 1px solid transparent;
   border-radius: 4px;
@@ -182,7 +234,7 @@ button.agent-desk-needs:hover {
   .agent-desk-seat-info {
     left: 6%;
     right: 6%;
-    top: 13%;
+    top: 5%;
   }
   .agent-desk-seat-heading {
     gap: 4px;
@@ -192,16 +244,6 @@ button.agent-desk-needs:hover {
   }
   .agent-desk-state {
     font-size: 10px;
-  }
-  .agent-desk[data-seats="2"] .agent-desk-configure {
-    position: absolute;
-    top: 66px;
-    right: 0;
-    width: 28px;
-    padding: 0;
-  }
-  .agent-desk[data-seats="2"] .agent-desk-configure > span {
-    display: none;
   }
   .agent-desk-model {
     font-size: 11px;

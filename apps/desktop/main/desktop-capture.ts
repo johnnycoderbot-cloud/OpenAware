@@ -20,6 +20,7 @@ const START_CAPTURE = "window.openAwareCapture.start()";
 const TAKE_FRAME = "window.openAwareCapture.take()";
 const MAX_PREVIEW_BYTES = 1_572_864;
 const MAX_PREVIEW_URL_LENGTH = 23 + 4 * Math.ceil(MAX_PREVIEW_BYTES / 3);
+const MAX_CAPTURE_CLOCK_SKEW_MS = 1000;
 const POLL_INTERVAL_MS = 67;
 const CAPTURE_FAILURE =
   "Desktop capture ended or became unavailable. Reconnect to resume.";
@@ -78,7 +79,14 @@ export function validateDesktopCaptureFrame(
     !integer("nativeWidth", 1, 32768) ||
     !integer("nativeHeight", 1, 32768) ||
     !integer("sequence", lastSequence + 1, Number.MAX_SAFE_INTEGER) ||
-    !integer("capturedAt", Math.max(1, lastCapturedAt), now) ||
+    // Renderer/main clocks can differ by a few milliseconds on Windows. Match
+    // the renderer's preview tolerance while retaining the original timestamp
+    // and stale/replay/order checks. Service inference admission stays stricter.
+    !integer(
+      "capturedAt",
+      Math.max(1, lastCapturedAt),
+      now + MAX_CAPTURE_CLOCK_SKEW_MS,
+    ) ||
     now - (value.capturedAt as number) > 5000 ||
     typeof value.dataUrl !== "string" ||
     value.dataUrl.length > MAX_PREVIEW_URL_LENGTH ||

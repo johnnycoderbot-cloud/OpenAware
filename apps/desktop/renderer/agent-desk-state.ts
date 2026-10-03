@@ -1,67 +1,68 @@
 import type { Snapshot } from "@openaware/contracts";
 import type { AgentDeskSeat, AgentDeskState } from "./AgentDesk";
 
-/** Seats represent the two existing roles sharing the explicit model binding. */
+/** Each seat derives readiness and scope from its own independently bound agent. */
 export function buildAgentDeskSeats(
   snapshot: Snapshot,
   desktopAvailable: boolean,
-  split: boolean,
 ): AgentDeskSeat[] {
-  const connected = desktopAvailable && snapshot.binding.status === "verified";
-  const disconnectedState: AgentDeskState = !desktopAvailable
-    ? "disconnected"
-    : snapshot.binding.status === "probing"
-      ? "probing"
-      : snapshot.binding.status === "selected"
-        ? "selected"
-        : snapshot.binding.status === "failed"
-          ? "failed"
-          : "unconfigured";
-  const enabledSources = snapshot.sources.filter(
-    (source) => source.analysisEnabled,
-  );
-  const observing =
-    snapshot.session === "monitoring" &&
-    enabledSources.some((source) => source.status === "live");
-  const observer: AgentDeskSeat = {
-    id: "observer",
-    label: "Observer",
-    connected,
-    state: !connected
-      ? disconnectedState
-      : observing
-        ? "watching"
-        : snapshot.session === "paused"
-          ? "paused"
-          : "ready",
-    modelName: connected ? snapshot.binding.modelId : undefined,
-    assignments: enabledSources.map((source) => source.name),
-    detail: connected
-      ? split
-        ? "Shared model · Monitoring"
-        : "Monitoring"
-      : snapshot.binding.error || "Connect and verify a vision model",
-    actionLabel: "Configure model",
-    disabled: !desktopAvailable,
-  };
-  if (!split) return [observer];
-  const target = snapshot.sources.find(
-    (source) => source.id === snapshot.pendingPlan?.sourceId,
-  );
-  return [
-    observer,
-    {
-      id: "operator",
-      label: "Operator",
+  return snapshot.agents.map((agent) => {
+    const connected = desktopAvailable && agent.binding.status === "verified";
+    const disconnectedState: AgentDeskState = !desktopAvailable
+      ? "disconnected"
+      : agent.binding.status === "probing"
+        ? "probing"
+        : agent.binding.status === "selected"
+          ? "selected"
+          : agent.binding.status === "failed"
+            ? "failed"
+            : "unconfigured";
+    const enabledSources = snapshot.sources.filter(
+      (source) => agent.sourceIds.includes(source.id) && source.analysisEnabled,
+    );
+    const observing =
+      agent.session === "monitoring" &&
+      enabledSources.some((source) => source.status === "live");
+    return {
+      id: agent.id,
+      label: agent.name,
+      roleLabel: agent.role === "operator" ? "Operator" : "Observer",
+      selected: agent.id === snapshot.activeAgentId,
       connected,
-      state: connected ? "ready" : disconnectedState,
-      modelName: connected ? snapshot.binding.modelId : undefined,
-      assignments: target ? [target.name] : [],
-      detail: connected
-        ? "Shared model · You approve each action"
-        : "Connect and verify a vision model",
-      actionLabel: connected ? "Open Operator" : "Configure model",
+      state: !connected
+        ? disconnectedState
+        : agent.lastError
+          ? "error"
+          : observing
+            ? "watching"
+            : agent.session === "paused"
+              ? "paused"
+              : "ready",
+      modelName: connected
+        ? agent.models.find((model) => model.id === agent.binding.modelId)
+            ?.name || agent.binding.modelId
+        : undefined,
+      assignments: snapshot.sources
+        .filter((source) => agent.sourceIds.includes(source.id))
+        .map((source) => source.name),
+      assignmentCount: agent.sourceIds.length,
+      monitoring: agent.session === "monitoring",
+      canStart:
+        snapshot.sources.some(
+          (source) =>
+            agent.sourceIds.includes(source.id) &&
+            source.status === "live" &&
+            (source.analysisEnabled || source.motionEnabled),
+        ) &&
+        (!enabledSources.some((source) => source.status === "live") ||
+          connected),
+      detail:
+        agent.lastError ||
+        (connected
+          ? `${agent.role === "operator" ? "Operator" : "Observer"} · ${agent.sourceIds.length}/4 feeds`
+          : agent.binding.error || "Connect and verify a vision model"),
+      actionLabel: "Configure model",
       disabled: !desktopAvailable,
-    },
-  ];
+    };
+  });
 }

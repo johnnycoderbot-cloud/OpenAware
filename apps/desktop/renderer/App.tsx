@@ -16,7 +16,6 @@ import {
   CheckCircle2,
   ChevronRight,
   Clock3,
-  Columns2,
   Cpu,
   Eye,
   Layers3,
@@ -43,6 +42,9 @@ import {
 import {
   initialSnapshot,
   MAX_SOURCES,
+  MAX_AGENTS,
+  MAX_AGENT_SOURCES,
+  type AgentSnapshot,
   type CaptureChoice,
   type CaptionSearchResult,
   type Command,
@@ -114,14 +116,49 @@ export function App() {
   const [focusedSourceId, setFocusedSourceId] = useState<string>();
   const [layoutResetRevision, setLayoutResetRevision] = useState(0);
   const [lowerPanel, setLowerPanel] = useState<"desk" | "memory">("desk");
-  const [splitDesk, setSplitDesk] = useState(false);
+  const [agentDialog, setAgentDialog] = useState<"new" | string>();
   const [desktopState, setDesktopState] = useState<DesktopState>();
   const [notice, setNotice] = useState<string>();
-  const [pending, setPending] = useState<string[]>([]);
-  const [questionDraft, setQuestionDraft] = useState("");
-  const [excludedQuestionSources, setExcludedQuestionSources] = useState<
-    string[]
-  >([]);
+  const [allPending, setPending] = useState<string[]>([]);
+  const [questionDrafts, setQuestionDrafts] = useState<Record<string, string>>(
+    {},
+  );
+  const [questionExclusions, setQuestionExclusions] = useState<
+    Record<string, string[]>
+  >({});
+  const activeAgent = snapshot.agents.find(
+    (agent) => agent.id === snapshot.activeAgentId,
+  );
+  const pending = allPending
+    .filter(
+      (label) =>
+        !label.startsWith("agent:") ||
+        label.startsWith(`agent:${snapshot.activeAgentId}:`),
+    )
+    .map((label) => label.replace(`agent:${snapshot.activeAgentId}:`, ""));
+  const questionDraft = questionDrafts[snapshot.activeAgentId] || "";
+  const excludedQuestionSources =
+    questionExclusions[snapshot.activeAgentId] || [];
+  const setQuestionDraft: React.Dispatch<React.SetStateAction<string>> = (
+    value,
+  ) => {
+    const agentId = snapshot.activeAgentId;
+    setQuestionDrafts((drafts) => ({
+      ...drafts,
+      [agentId]:
+        typeof value === "function" ? value(drafts[agentId] || "") : value,
+    }));
+  };
+  const setExcludedQuestionSources: React.Dispatch<
+    React.SetStateAction<string[]>
+  > = (value) => {
+    const agentId = snapshot.activeAgentId;
+    setQuestionExclusions((exclusions) => ({
+      ...exclusions,
+      [agentId]:
+        typeof value === "function" ? value(exclusions[agentId] || []) : value,
+    }));
+  };
   const [, redraw] = useState(0);
   const managerRef = useRef<CaptureManager | undefined>(undefined);
   const bridge = window.openAware;
@@ -160,9 +197,19 @@ export function App() {
       manager?.stopAll();
     };
   }, [bridge, apply, manager, report, update]);
+  const sourceStatuses = useRef(new Map<string, Source["status"]>());
   useEffect(() => {
-    if (snapshot.session === "stopped") manager?.stopAll();
-  }, [snapshot.session, manager]);
+    const previous = sourceStatuses.current;
+    for (const source of snapshot.sources)
+      if (source.status !== "live" && previous.get(source.id) === "live")
+        manager?.stop(source.id);
+    for (const id of previous.keys())
+      if (!snapshot.sources.some((source) => source.id === id))
+        manager?.stop(id);
+    sourceStatuses.current = new Map(
+      snapshot.sources.map((source) => [source.id, source.status]),
+    );
+  }, [snapshot.sources, manager]);
   useEffect(() => {
     setExcludedQuestionSources((ids) => {
       const next = ids.filter((id) =>
@@ -196,16 +243,29 @@ export function App() {
       );
       return;
     }
-    setPending((p) => [...p, label]);
+    const scoped =
+      /^(provider\.|monitor\.|conversation\.|automation\.|pipeline\.|rule\.|history\.|events\.)/.test(
+        command.type,
+      );
+    const target = scoped
+      ? "agentId" in command && command.agentId
+        ? command.agentId
+        : snapshot.activeAgentId
+      : undefined;
+    const pinned = target
+      ? ({ ...command, agentId: target } as Command)
+      : command;
+    const pendingLabel = target ? `agent:${target}:${label}` : label;
+    setPending((p) => [...p, pendingLabel]);
     try {
-      const state = await bridge.invoke(command);
+      const state = await bridge.invoke(pinned);
       if (state && Array.isArray(state.sources)) apply(state);
       return state;
     } catch (error) {
       report(error instanceof Error ? error.message : String(error));
       return;
     } finally {
-      setPending((p) => p.filter((item) => item !== label));
+      setPending((p) => p.filter((item) => item !== pendingLabel));
     }
   }
   async function stopAll() {
@@ -273,6 +333,13 @@ export function App() {
     await run({ type: "source.remove", sourceId: source.id });
   }
   const live = snapshot.sources.filter((source) => source.status === "live");
+  const assignedSources = snapshot.sources.filter((source) =>
+    activeAgent?.sourceIds.includes(source.id),
+  );
+  const assignedLive = assignedSources.filter(
+    (source) => source.status === "live",
+  );
+  const agentSnapshot = { ...snapshot, sources: assignedSources };
   const sessionActive = snapshot.session === "monitoring";
   const screenSources = snapshot.sources.filter(
     (source) => source.kind !== "camera" && source.kind !== "virtual_camera",
@@ -288,8 +355,8 @@ export function App() {
     [sourceMembership],
   );
   const canStart =
-    live.some((s) => s.motionEnabled || s.analysisEnabled) &&
-    (!live.some((s) => s.analysisEnabled) ||
+    assignedLive.some((s) => s.motionEnabled || s.analysisEnabled) &&
+    (!assignedLive.some((s) => s.analysisEnabled) ||
       snapshot.binding.status === "verified");
   const sourceHeaderId = screenSources[0]?.id || snapshot.sources[0]?.id;
   const addSourceControl = (
@@ -298,8 +365,8 @@ export function App() {
       className="button secondary source-add-button"
       title={
         snapshot.sources.length >= MAX_SOURCES
-          ? "Four-source limit reached"
-          : "Add a monitor, window or camera"
+          ? `${MAX_SOURCES}-source limit reached`
+          : "Add a screen, camera or video"
       }
       disabled={!bridge || snapshot.sources.length >= MAX_SOURCES}
       onClick={() => setAddOpen(true)}
@@ -336,6 +403,14 @@ export function App() {
       onDisconnect={() => void disconnect(source)}
       onRemove={() => void remove(source)}
       onMasks={() => setMaskSource(source)}
+      onOpenPlayer={
+        ["video_file", "video_url", "web_video"].includes(source.kind)
+          ? () =>
+              void bridge
+                ?.openVideoSource(source.id)
+                .catch((error) => report(String(error)))
+          : undefined
+      }
       onToggle={(key, value) =>
         void run({
           type: "source.update",
@@ -373,6 +448,8 @@ export function App() {
                 item.name === "Connections" ? "connections" : undefined
               }
               onClick={() => setTab(item.name)}
+              aria-label={item.name}
+              title={item.name}
               aria-current={tab === item.name ? "page" : undefined}
             >
               <item.icon size={18} />
@@ -386,6 +463,21 @@ export function App() {
             </button>
           ))}
         </nav>
+        <select
+          className="active-agent-select"
+          aria-label="Active agent"
+          value={snapshot.activeAgentId}
+          disabled={!bridge || !snapshot.agents.length}
+          onChange={(event) =>
+            void run({ type: "agent.select", agentId: event.target.value })
+          }
+        >
+          {snapshot.agents.map((agent) => (
+            <option key={agent.id} value={agent.id}>
+              {agent.name}
+            </option>
+          ))}
+        </select>
         {tab === "Overview" && (
           <div className="workspace-controls">
             {screenSources.length > 0 && (
@@ -489,8 +581,9 @@ export function App() {
             disabled={
               !bridge ||
               (live.length === 0 &&
-                snapshot.session !== "monitoring" &&
-                !snapshot.busy &&
+                !snapshot.agents.some(
+                  (agent) => agent.session === "monitoring" || agent.busy,
+                ) &&
                 !snapshot.sources.some((s) => manager?.has(s.id))) ||
               pending.includes("stop")
             }
@@ -577,7 +670,7 @@ export function App() {
                       onClick={() => setAddOpen(true)}
                     >
                       <Monitor size={28} />
-                      <span>Add a screen or camera</span>
+                      <span>Add a screen, camera or video</span>
                     </button>
                   </DockPane>
                 )}
@@ -646,31 +739,22 @@ export function App() {
                   className="agent-desk-pane"
                   actions={
                     <>
-                      {lowerPanel === "desk" && (
-                        <button
-                          className="text-button"
-                          data-testid="split-agent-desk"
-                          aria-label={splitDesk ? "Single desk" : "Split desk"}
-                          aria-pressed={splitDesk}
-                          onClick={() => setSplitDesk((value) => !value)}
-                          title={
-                            splitDesk
-                              ? "Use one Observer seat"
-                              : "Show Observer and Operator seats sharing the selected model"
-                          }
-                        >
-                          <Columns2 size={13} />
-                          <span className="desk-action-full">
-                            {splitDesk ? "Single desk" : "Split desk"}
-                          </span>
-                          <span
-                            className="desk-action-short"
-                            aria-hidden="true"
-                          >
-                            {splitDesk ? "Single" : "Split"}
-                          </span>
-                        </button>
-                      )}
+                      <button
+                        className="text-button"
+                        data-testid="add-agent"
+                        aria-label="Add agent"
+                        disabled={
+                          !bridge || snapshot.agents.length >= MAX_AGENTS
+                        }
+                        title={`${snapshot.agents.length}/${MAX_AGENTS} agents`}
+                        onClick={() => setAgentDialog("new")}
+                      >
+                        <Plus size={13} />
+                        <span className="desk-action-full">Add agent</span>
+                        <span className="desk-action-short" aria-hidden="true">
+                          Add
+                        </span>
+                      </button>
                       <button
                         className="text-button"
                         data-testid="switch-lower-panel"
@@ -709,17 +793,23 @@ export function App() {
                     className="lower-pane-view desk-view"
                     hidden={lowerPanel !== "desk"}
                   >
-                    {splitDesk && (
-                      <span className="desk-shared-label">Shared model</span>
-                    )}
                     <AgentDesk
-                      seats={buildAgentDeskSeats(snapshot, !!bridge, splitDesk)}
+                      seats={buildAgentDeskSeats(snapshot, !!bridge)}
+                      onSelect={(id) =>
+                        void run({ type: "agent.select", agentId: id })
+                      }
+                      onEdit={setAgentDialog}
+                      onToggleWatching={(id, monitoring) =>
+                        void run({
+                          type: monitoring ? "monitor.pause" : "monitor.start",
+                          agentId: id,
+                        })
+                      }
                       onConfigure={(id) =>
-                        setTab(
-                          id === "operator" &&
-                            snapshot.binding.status === "verified"
-                            ? "Operator"
-                            : "Connections",
+                        void run({ type: "agent.select", agentId: id }).then(
+                          (state) => {
+                            if (state) setTab("Connections");
+                          },
                         )
                       }
                     />
@@ -729,7 +819,8 @@ export function App() {
                     hidden={lowerPanel !== "memory"}
                   >
                     <VideoMemory
-                      snapshot={snapshot}
+                      key={snapshot.activeAgentId}
+                      snapshot={agentSnapshot}
                       run={run}
                       pending={pending}
                       report={report}
@@ -738,7 +829,7 @@ export function App() {
                 </DockPane>
                 <DockPane
                   id="assistant"
-                  title="Workspace assistant"
+                  title={activeAgent?.name || "Workspace assistant"}
                   icon={<Bot size={17} />}
                   actions={
                     <button
@@ -753,7 +844,8 @@ export function App() {
                   }
                 >
                   <Conversation
-                    snapshot={snapshot}
+                    key={snapshot.activeAgentId}
+                    snapshot={agentSnapshot}
                     run={run}
                     pending={pending}
                     text={questionDraft}
@@ -827,6 +919,7 @@ export function App() {
           )}
           {tab === "Connections" && (
             <Connections
+              key={snapshot.activeAgentId}
               snapshot={snapshot}
               run={run}
               pending={pending}
@@ -836,7 +929,8 @@ export function App() {
           )}
           {tab === "Operator" && (
             <Operator
-              snapshot={snapshot}
+              key={snapshot.activeAgentId}
+              snapshot={agentSnapshot}
               bridge={bridge}
               run={run}
               pending={pending}
@@ -925,6 +1019,16 @@ export function App() {
           onAdd={addSource}
         />
       )}
+      {agentDialog && (
+        <AgentDialog
+          key={agentDialog}
+          agent={snapshot.agents.find((agent) => agent.id === agentDialog)}
+          sources={snapshot.sources}
+          count={snapshot.agents.length}
+          run={run}
+          onClose={() => setAgentDialog(undefined)}
+        />
+      )}
       {maskSource && (
         <MaskDialog
           source={
@@ -997,6 +1101,7 @@ function SourceTile({
   onDisconnect,
   onRemove,
   onMasks,
+  onOpenPlayer,
   onToggle,
 }: {
   source: Source;
@@ -1010,6 +1115,7 @@ function SourceTile({
   onDisconnect: () => void;
   onRemove: () => void;
   onMasks: () => void;
+  onOpenPlayer?: () => void;
   onToggle: (key: "analysisEnabled" | "motionEnabled", value: boolean) => void;
 }) {
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -1165,7 +1271,10 @@ function SourceTile({
           aria-label={`Source settings for ${source.name}`}
           id={`settings-${source.id}`}
         >
-          <label className="toggle-label">
+          <label
+            className="toggle-label"
+            title="Shared source policy: applies to every assigned agent"
+          >
             <input
               type="checkbox"
               checked={source.analysisEnabled}
@@ -1212,6 +1321,19 @@ function SourceTile({
             : "—"}
         </span>
         <div>
+          {onOpenPlayer && (
+            <button
+              className="text-button"
+              title={
+                source.kind === "web_video"
+                  ? "Play or sign in in the isolated video page"
+                  : "Open playback controls"
+              }
+              onClick={onOpenPlayer}
+            >
+              Open player
+            </button>
+          )}
           <button
             ref={settingsTrigger}
             className="icon-button"
@@ -1554,6 +1676,7 @@ function VideoMemory({
     try {
       const found = await window.openAware.invoke<CaptionSearchResult>({
         type: "history.search",
+        agentId: snapshot.activeAgentId,
         query: query.trim(),
         ...scope(),
         limit: 50,
@@ -2011,46 +2134,29 @@ function Connections({
     const bridge = window.openAware;
     if (!bridge) return;
     setProbing(true);
-    let temporaryId: string | undefined;
     try {
-      let source = snapshot.sources.find((s) => s.kind === "demo");
-      if (!source) {
-        if (snapshot.sources.length >= 4)
-          throw new Error(
-            "Disconnect and remove one source to make room for the synthetic vision test.",
-          );
-        temporaryId = crypto.randomUUID();
-        const next = await bridge.invoke({
-          type: "source.add",
-          source: {
-            id: temporaryId,
-            name: "Synthetic vision test",
-            kind: "demo",
-            deviceId: "synthetic-probe",
-          },
-        });
-        apply(next);
-        source = next.sources.find((s) => s.id === temporaryId);
-      }
-      if (!source)
-        throw new Error("Could not register a synthetic vision test.");
+      const source: Source = {
+        id: crypto.randomUUID(),
+        name: "Synthetic vision test",
+        kind: "demo",
+        deviceId: "synthetic-probe",
+        revision: 1,
+        status: "stopped",
+        analysisEnabled: false,
+        motionEnabled: false,
+        masks: [],
+      };
       const frame = createProbe(source);
-      apply(await bridge.invoke({ type: "provider.probe", frame }));
+      apply(
+        await bridge.invoke({
+          type: "provider.probe",
+          agentId: snapshot.activeAgentId,
+          frame,
+        }),
+      );
     } catch (error) {
       report(error instanceof Error ? error.message : String(error));
     } finally {
-      if (temporaryId) {
-        try {
-          apply(
-            await bridge.invoke({
-              type: "source.remove",
-              sourceId: temporaryId,
-            }),
-          );
-        } catch (error) {
-          report(String(error));
-        }
-      }
       setProbing(false);
     }
   }
@@ -2245,7 +2351,18 @@ function Connections({
           </span>
         </div>
       </section>
-      <PipelineSettings snapshot={snapshot} run={run} pending={pending} />
+      <PipelineSettings
+        snapshot={{
+          ...snapshot,
+          sources: snapshot.sources.filter((source) =>
+            snapshot.agents
+              .find((agent) => agent.id === snapshot.activeAgentId)
+              ?.sourceIds.includes(source.id),
+          ),
+        }}
+        run={run}
+        pending={pending}
+      />
     </div>
   );
 }
@@ -2289,6 +2406,9 @@ function Operator({
   const sources = snapshot.sources.filter(
     (s) => s.status === "live" && s.kind === "monitor" && s.masks.length === 0,
   );
+  const isOperator =
+    snapshot.agents.find((agent) => agent.id === snapshot.activeAgentId)
+      ?.role === "operator";
   const plan = snapshot.pendingPlan;
   async function execute() {
     if (!bridge || !plan) return;
@@ -2368,6 +2488,7 @@ function Operator({
               className="button primary"
               disabled={
                 !bridge ||
+                !isOperator ||
                 !sourceId ||
                 !sources.some((s) => s.id === sourceId) ||
                 !goal.trim() ||
@@ -2383,6 +2504,11 @@ function Operator({
             </button>
           </div>
         </form>
+        {!isOperator && (
+          <p className="muted small">
+            Select an Operator agent to propose computer actions.
+          </p>
+        )}
         {sources.length === 0 && (
           <div className="inline-notice">
             <Monitor size={17} />
@@ -2581,6 +2707,169 @@ function Dialog({
   );
 }
 
+function AgentDialog({
+  agent,
+  sources,
+  count,
+  run,
+  onClose,
+}: {
+  agent?: AgentSnapshot;
+  sources: Source[];
+  count: number;
+  run: (command: Command, label?: string) => Promise<Snapshot | undefined>;
+  onClose: () => void;
+}) {
+  const [name, setName] = useState(agent?.name || `Agent ${count + 1}`);
+  const [role, setRole] = useState<"observer" | "operator">(
+    agent?.role || "observer",
+  );
+  const [sourceIds, setSourceIds] = useState(agent?.sourceIds || []);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const createdId = useRef<string | undefined>(agent?.id);
+  async function save(event: React.FormEvent) {
+    event.preventDefault();
+    if (!window.openAware || saving) return;
+    setSaving(true);
+    setError("");
+    try {
+      let id = createdId.current;
+      if (!id)
+        id = (
+          await window.openAware.invoke<AgentSnapshot>({
+            type: "agent.add",
+            name: name.trim(),
+            role,
+          })
+        ).id;
+      createdId.current = id;
+      const updated = await run({
+        type: "agent.update",
+        agentId: id,
+        patch: { name: name.trim(), role, sourceIds },
+      });
+      if (!updated) return;
+      const selected = await run({ type: "agent.select", agentId: id });
+      if (selected) onClose();
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : String(failure));
+    } finally {
+      setSaving(false);
+    }
+  }
+  return (
+    <Dialog
+      title={agent ? `Edit ${agent.name}` : "Add an agent"}
+      onClose={onClose}
+    >
+      <form onSubmit={(event) => void save(event)}>
+        <div className="agent-identity-fields">
+          <label>
+            Agent name
+            <input
+              aria-label="Agent name"
+              required
+              maxLength={80}
+              value={name}
+              disabled={saving}
+              onChange={(event) => setName(event.target.value)}
+            />
+          </label>
+          <label>
+            Role
+            <select
+              aria-label="Agent role"
+              value={role}
+              disabled={saving}
+              onChange={(event) => setRole(event.target.value as typeof role)}
+            >
+              <option value="observer">Observer</option>
+              <option value="operator">Operator</option>
+            </select>
+          </label>
+        </div>
+        <div className="agent-assignment-heading">
+          <strong>Assigned feeds</strong>
+          <span>
+            {sourceIds.length}/{MAX_AGENT_SOURCES}
+          </span>
+        </div>
+        <div
+          className="agent-assignment-options"
+          role="group"
+          aria-label="Assigned feeds"
+        >
+          {sources.map((source) => (
+            <label
+              key={source.id}
+              className={sourceIds.includes(source.id) ? "selected" : ""}
+            >
+              <input
+                type="checkbox"
+                checked={sourceIds.includes(source.id)}
+                disabled={
+                  saving ||
+                  (!sourceIds.includes(source.id) &&
+                    sourceIds.length >= MAX_AGENT_SOURCES)
+                }
+                onChange={(event) =>
+                  setSourceIds((ids) =>
+                    event.target.checked
+                      ? [...ids, source.id]
+                      : ids.filter((id) => id !== source.id),
+                  )
+                }
+              />
+              {source.name}
+            </label>
+          ))}
+          {!sources.length && (
+            <span className="muted small">Add sources to assign feeds.</span>
+          )}
+        </div>
+        {error && (
+          <p className="inline-notice error" role="alert">
+            {error}
+          </p>
+        )}
+        <div className="modal-footer">
+          {agent && (
+            <button
+              type="button"
+              className="text-button agent-remove"
+              disabled={saving || count <= 1}
+              onClick={async () => {
+                setSaving(true);
+                const result = await run({
+                  type: "agent.remove",
+                  agentId: agent.id,
+                });
+                setSaving(false);
+                if (result) onClose();
+              }}
+            >
+              <Trash2 size={14} />
+              Remove agent
+            </button>
+          )}
+          <button
+            type="button"
+            className="button secondary"
+            disabled={saving}
+            onClick={onClose}
+          >
+            Cancel
+          </button>
+          <button className="button primary" disabled={saving || !name.trim()}>
+            {saving ? "Saving…" : agent ? "Save agent" : "Add agent"}
+          </button>
+        </div>
+      </form>
+    </Dialog>
+  );
+}
+
 function AddSourceDialog({
   bridge,
   onClose,
@@ -2598,6 +2887,8 @@ function AddSourceDialog({
   const [loading, setLoading] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState("");
+  const [videoUrl, setVideoUrl] = useState("");
+  const [videoMode, setVideoMode] = useState<"direct" | "page">("page");
   useEffect(() => {
     let cancelled = false;
     setError("");
@@ -2609,6 +2900,11 @@ function AddSourceDialog({
       return;
     }
     setDeviceId("");
+    if (kind === "video_file" || kind === "video_url") {
+      setName(kind === "video_file" ? "My video" : "Video page");
+      setLoading(false);
+      return;
+    }
     setName(
       kind === "monitor"
         ? "My monitor"
@@ -2663,7 +2959,18 @@ function AddSourceDialog({
     e.preventDefault();
     setConnecting(true);
     try {
-      await onAdd(name, kind, deviceId);
+      if (kind === "video_url") {
+        if (!bridge) return;
+        const selection = await bridge.prepareVideoUrl(
+          videoUrl.trim(),
+          videoMode,
+        );
+        await onAdd(
+          name.trim() || selection.name,
+          selection.kind,
+          selection.deviceId,
+        );
+      } else await onAdd(name, kind, deviceId);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -2682,6 +2989,8 @@ function AddSourceDialog({
           { id: "window" as SourceKind, label: "Window", icon: Layers3 },
           { id: "camera" as SourceKind, label: "Camera", icon: Camera },
           { id: "virtual_camera" as SourceKind, label: "OBS", icon: Video },
+          { id: "video_file" as SourceKind, label: "Video file", icon: Video },
+          { id: "video_url" as SourceKind, label: "Video link", icon: Radio },
         ].map((item) => (
           <button
             data-testid={item.id === "demo" ? "add-demo" : undefined}
@@ -2715,6 +3024,73 @@ function AddSourceDialog({
                 camera permission is requested.
               </p>
             </div>
+          </div>
+        ) : kind === "video_file" ? (
+          <div className="video-file-choice">
+            <button
+              type="button"
+              className="button secondary"
+              disabled={!bridge || loading || connecting}
+              onClick={async () => {
+                if (!bridge) return;
+                setLoading(true);
+                setError("");
+                try {
+                  const selected = await bridge.chooseVideoFile();
+                  if (selected) {
+                    setDeviceId(selected.deviceId);
+                    setName(selected.name.slice(0, 80));
+                  }
+                } catch (failure) {
+                  setError(
+                    failure instanceof Error
+                      ? failure.message
+                      : String(failure),
+                  );
+                } finally {
+                  setLoading(false);
+                }
+              }}
+            >
+              <Video size={15} />
+              {loading ? "Choosing…" : "Choose video file"}
+            </button>
+            {deviceId && <span className="muted small">{name}</span>}
+          </div>
+        ) : kind === "video_url" ? (
+          <div className="video-link-fields">
+            <label>
+              Video link
+              <input
+                aria-label="Video link"
+                type="url"
+                required
+                maxLength={2048}
+                placeholder="https://…"
+                value={videoUrl}
+                onChange={(event) => setVideoUrl(event.target.value)}
+              />
+            </label>
+            <label>
+              Link type
+              <select
+                aria-label="Video link type"
+                value={videoMode}
+                onChange={(event) =>
+                  setVideoMode(event.target.value as typeof videoMode)
+                }
+              >
+                <option value="page">
+                  Web page (YouTube, Facebook, TikTok, Instagram, X)
+                </option>
+                <option value="direct">Direct video stream</option>
+              </select>
+            </label>
+            <span className="field-note">
+              {videoMode === "page"
+                ? "Use Open player to press Play or sign in. The AI sees visible page pixels."
+                : "HTTP(S) media only. Use Open player for playback controls."}
+            </span>
           </div>
         ) : kind === "camera" || kind === "virtual_camera" ? (
           <label>
@@ -2787,7 +3163,12 @@ function AddSourceDialog({
           </button>
           <button
             className="button primary"
-            disabled={!bridge || !name.trim() || !deviceId || connecting}
+            disabled={
+              !bridge ||
+              !name.trim() ||
+              (kind === "video_url" ? !videoUrl.trim() : !deviceId) ||
+              connecting
+            }
           >
             <Plus size={16} />
             {connecting ? "Connecting…" : "Connect source"}

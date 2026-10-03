@@ -1,10 +1,10 @@
 # Local video workflows
 
-OpenAware 0.3 adds VSS-inspired workflows using the existing desktop/camera capture and local LM Studio, Ollama and llama.cpp adapters. No NVIDIA VSS server, GPU containers, RTSP server, model download or cloud account is required. NVIDIA's CLI is a client for its deployed services, so these are OpenAware commands and an original local implementation rather than an API-compatible VSS server.
+OpenAware 0.3 introduced VSS-inspired workflows using desktop/camera capture and local LM Studio, Ollama and llama.cpp adapters. Version 0.4 also supports [independent agents and video files/links](agents-and-video.md). No NVIDIA VSS server, GPU containers, RTSP server, model download or cloud account is required. NVIDIA's CLI is a client for its deployed services, so these are OpenAware commands and an original local implementation rather than an API-compatible VSS server.
 
 ## In the app
 
-Connect sources through **Add source**. In **Connections**, choose LM Studio, Ollama or llama.cpp as the running local provider, select a vision model and pass the synthetic vision probe. Enable AI analysis for the desired sources and click **Start watching**. Live previews remain independent of inference speed.
+Connect sources through **Add source**, select an agent and assign its **Feeds**. In **Connections**, choose LM Studio, Ollama or llama.cpp as that agent's running local provider, select a vision model and pass the synthetic vision probe. Enable AI analysis for the desired sources and start that agent watching. Live previews remain independent of inference speed. Each agent has its own rules, caption memory, summaries and conversation.
 
 The temporal option retains up to three chronological masked samples per source spanning at most four seconds. The newest frame must be fresh when dispatched. Background inference uses one source at a time and only the selected model. Footers show the analyzed interval, sample count and age. Background captions and historical summaries have a 60-second deadline to accommodate slower local inference; late captions remain historical and rule evidence older than 15 seconds becomes unknown. Current questions and Operator retain their 20-second deadline and 15-second completion freshness. The model sees sampled images; this does not establish native continuous-video ingestion or every-frame understanding.
 
@@ -12,7 +12,7 @@ The lower **Video memory** pane contains session captions. Search ranks caption 
 
 Add an alert rule in Connections with a name, visible condition and explicit sources. Rules need two distinct matching observations and have a 30-second cooldown. Missing, malformed, uncertain, stale or mismatched rule evidence does not alert. Disable or edit a rule to reset its state. Alerts appear in activity/Event log; they do not run Operator actions.
 
-Session memory remains bounded: 100 captions, 100 chat messages, 1000 events and 16 MiB combined. No raw video recording or vector database is added. Pause, Stop, source/model/mask changes and clearing history invalidate affected work. Stop also releases capture; reconnect sources through the app to resume.
+Each agent's session memory remains bounded: 100 captions, 100 chat messages, 1000 events and 16 MiB combined. No raw video recording or vector database is added. Pause, Stop, source/model/mask changes and clearing history invalidate affected work. Stop also releases capture; reconnect sources through the app to resume.
 
 ## Agent and CLI access
 
@@ -40,7 +40,7 @@ node dist/cli.cjs watch stop
 
 Use UUIDs returned by `sources`, not names. See `node dist/cli.cjs --help` for source/time scopes and rule editing. `captions summary` returns a job state immediately; check `status` for completion. Time scopes use ISO dates with timezone.
 
-The opt-in control listener binds only 127.0.0.1 on a random port. The CLI reads a private user-data connection file containing its bearer token. Browser-origin requests, alternate Hosts, unauthenticated requests, oversized bodies and commands outside the whitelist are rejected. CLI Stop goes through main-process immediate capture teardown. The interface cannot acquire sources, inject pixels, select providers/models, authorize native input or invoke a shell.
+The opt-in control listener binds only 127.0.0.1 on a random port. The CLI reads a private user-data connection file containing its bearer token. Browser-origin requests, alternate Hosts, unauthenticated requests, oversized bodies and commands outside the whitelist are rejected. CLI questions, rules, memory and watch Start/Pause use the currently selected agent; status includes redacted agent/assignment metadata. CLI Stop goes through main-process immediate capture teardown for all agents. The interface cannot manage agents, acquire sources, inject pixels, select providers/models, authorize native input or invoke a shell.
 
 The portable [OpenAware skill](../skills/openaware-video-workflows/SKILL.md) describes these commands. After building, run `powershell -File scripts/install-video-skill.ps1` to install the instructions and bundled CLI under your Codex skills folder. Future Codex sessions can discover it as `$openaware-video-workflows`. The script copies only those two files and no private connection descriptor. A custom destination can be supplied with `-Destination`.
 

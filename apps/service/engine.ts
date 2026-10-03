@@ -3,7 +3,7 @@ import { performance } from "node:perf_hooks";
 import {
   commandSchema,
   initialSnapshot,
-  MAX_SOURCES,
+  MAX_AGENT_SOURCES,
   MAX_SEMANTIC_RULES,
 } from "../../packages/contracts/src/index.js";
 import type {
@@ -54,6 +54,7 @@ interface ReceivedFrame {
   epoch: number;
 }
 interface Job {
+  agentRevision?: number;
   kind: "observe" | "probe" | "chat" | "plan" | "summary";
   frames: ReceivedFrame[];
   question: string;
@@ -71,12 +72,19 @@ export interface ServiceOptions {
   providerFactory?: (config: ProviderConfig) => VisionProvider;
   clock?: { wall: () => number; mono: () => number };
   autoTick?: boolean;
+  /** Private composition knobs; never writable by renderer commands. */
+  maxSources?: number;
+  /** Catalog-only validation stores replay/order metadata, never image receipts. */
+  retainFrames?: boolean;
+  agent?: { id: string; revision: () => number };
 }
 export interface Service {
   command(command: Command): Promise<unknown>;
   snapshot(): Snapshot;
   dispose(): void;
   tick(): void;
+  synchronizeSources(sources: Source[]): void;
+  invalidateContext(message: string): void;
 }
 
 const MAX_EVENTS = 1000,
@@ -91,6 +99,8 @@ const probePrompt =
   "This is a synthetic image capability test. Describe the main geometric shapes and their colors, and transcribe the visible uppercase label. Do not guess if it is unreadable.";
 
 export function createService(options: ServiceOptions = {}): Service {
+  const maxSources = options.maxSources ?? MAX_AGENT_SOURCES;
+  const retainFrames = options.retainFrames !== false;
   const clock = options.clock ?? {
     wall: Date.now,
     mono: () => performance.now(),
@@ -101,6 +111,10 @@ export function createService(options: ServiceOptions = {}): Service {
   const temporal = new Map<string, ReceivedFrame[]>();
   const semantic = new Map<string, SemanticState>();
   const seenFrames = new Map<string, string[]>();
+  const captureOrder = new Map<
+    string,
+    { capturedAt: number; mono: number; age: number }
+  >();
   const motions = new Map<string, MotionState>();
   const observationAges = new Map<string, { mono: number; age: number }>();
   const eligibility = new Map<string, number>();
@@ -116,6 +130,12 @@ export function createService(options: ServiceOptions = {}): Service {
   let nextSource = 0;
   let emission: ReturnType<typeof setTimeout> | undefined;
   let lastEmit = -Infinity;
+
+  function provenance(revision = options.agent?.revision()) {
+    return options.agent
+      ? { agentId: options.agent.id, agentRevision: revision }
+      : {};
+  }
 
   function source(id: string): Source {
     const result = state.sources.find((item) => item.id === id);
@@ -134,7 +154,7 @@ export function createService(options: ServiceOptions = {}): Service {
       epoch: state.epoch,
     };
   }
-  function frameAge(receipt: ReceivedFrame): number {
+  function frameAge(receipt: Pick<ReceivedFrame, "mono" | "age">): number {
     return receipt.age + Math.max(0, clock.mono() - receipt.mono);
   }
   function current(
@@ -349,6 +369,7 @@ export function createService(options: ServiceOptions = {}): Service {
     evidence?: Pick<TimelineEvent, "ruleId" | "ruleRevision" | "observationId">,
   ) {
     state.events.push({
+      ...provenance(),
       id: randomUUID(),
       type,
       message: message.slice(0, 500),
@@ -370,12 +391,20 @@ export function createService(options: ServiceOptions = {}): Service {
   }
   function invalidate(message: string, clear = true) {
     state.epoch++;
-    if (clear) frames.clear();
+    if (clear) {
+      frames.clear();
+      captureOrder.clear();
+    }
     temporal.clear();
     resetRules();
     cancelSummary(message);
     state.pendingPlan = undefined;
     active?.controller.abort();
+    if (state.binding.status === "probing") {
+      state.binding.status = "selected";
+      state.binding.verifiedAt = undefined;
+      state.binding.error = undefined;
+    }
     rejectQueued(() => true, message);
     for (const item of state.observations) item.status = "stale";
     observationAges.clear();
@@ -411,6 +440,7 @@ export function createService(options: ServiceOptions = {}): Service {
       throw new Error("Foreground request queue is full");
     return new Promise((resolve, reject) => {
       const job: Job = {
+        agentRevision: options.agent?.revision(),
         kind,
         frames: receipts,
         question,
@@ -560,6 +590,7 @@ export function createService(options: ServiceOptions = {}): Service {
         dispatched.set(id, frames.get(id)!.frame.id);
       }
       return {
+        agentRevision: options.agent?.revision(),
         kind: "observe",
         frames: selected,
         question: promptFor(selected, rules),
@@ -576,6 +607,7 @@ export function createService(options: ServiceOptions = {}): Service {
       !disposed &&
       job.epoch === state.epoch &&
       job.bindingRevision === state.binding.revision &&
+      job.agentRevision === options.agent?.revision() &&
       (job.rules ?? []).every((rule) =>
         state.pipeline.rules.some(
           (current) =>
@@ -720,6 +752,7 @@ export function createService(options: ServiceOptions = {}): Service {
           const steps = parsePlan(text);
           const receipt = job!.frames[0];
           const plan: AutomationPlan = {
+            ...provenance(job!.agentRevision),
             id: randomUUID(),
             sourceId: receipt.frame.sourceId,
             sourceRevision: receipt.frame.sourceRevision,
@@ -761,6 +794,7 @@ export function createService(options: ServiceOptions = {}): Service {
                 "Historical caption is too old for a current semantic alert.",
             }));
           const observation: Observation = {
+            ...provenance(job!.agentRevision),
             id: randomUUID(),
             sourceIds: ids,
             sourceNames: ids.map((id) => source(id).name),
@@ -790,6 +824,7 @@ export function createService(options: ServiceOptions = {}): Service {
           });
           if (job!.kind === "chat")
             state.chat.push({
+              ...provenance(job!.agentRevision),
               id: randomUUID(),
               role: "assistant",
               text: text.slice(0, 8000),
@@ -855,6 +890,7 @@ export function createService(options: ServiceOptions = {}): Service {
           (!controller.signal.aborted || timedOut) &&
           job!.epoch === state.epoch &&
           job!.bindingRevision === state.binding.revision &&
+          job!.agentRevision === options.agent?.revision() &&
           !disposed
         ) {
           state.lastError = message;
@@ -945,8 +981,12 @@ export function createService(options: ServiceOptions = {}): Service {
       case "state.get":
         return snapshot();
       case "source.add": {
-        if (state.sources.length >= MAX_SOURCES)
-          throw new Error("Maximum four sources");
+        if (state.sources.length >= maxSources)
+          throw new Error(
+            maxSources === 4
+              ? "Maximum four sources"
+              : `Maximum ${maxSources} sources`,
+          );
         if (state.sources.some((item) => item.id === command.source.id))
           throw new Error("Source already exists");
         state.sources.push({
@@ -982,6 +1022,7 @@ export function createService(options: ServiceOptions = {}): Service {
           eligibility.delete(item.id);
           dispatched.delete(item.id);
           seenFrames.delete(item.id);
+          captureOrder.delete(item.id);
           if (state.pendingPlan?.sourceId === item.id)
             state.pendingPlan = undefined;
           if (active && jobSourceIds(active.job).includes(item.id)) {
@@ -1010,6 +1051,7 @@ export function createService(options: ServiceOptions = {}): Service {
         eligibility.delete(item.id);
         dispatched.delete(item.id);
         seenFrames.delete(item.id);
+        captureOrder.delete(item.id);
         if (active && jobSourceIds(active.job).includes(item.id)) {
           active.controller.abort();
           if (active.job.kind === "summary")
@@ -1049,23 +1091,34 @@ export function createService(options: ServiceOptions = {}): Service {
         )
           requireFreshMotion(command.frame.capturedAt);
         const latest = frames.get(item.id);
-        if (latest && command.frame.capturedAt <= latest.frame.capturedAt)
+        const orderedAt = retainFrames
+          ? latest?.frame.capturedAt
+          : captureOrder.get(item.id)?.capturedAt;
+        if (orderedAt !== undefined && command.frame.capturedAt <= orderedAt)
           throw new Error("Frame capture order changed");
         const oldWindow = temporal.get(item.id);
-        frames.set(item.id, receipt);
-        temporal.set(
-          item.id,
-          state.pipeline.temporalEnabled
-            ? temporalWindow(oldWindow ?? [], receipt)
-            : [receipt],
-        );
-        trimHistory();
-        if (retainedBytes() > MAX_HISTORY_BYTES) {
-          if (latest) frames.set(item.id, latest);
-          else frames.delete(item.id);
-          if (oldWindow) temporal.set(item.id, oldWindow);
-          else temporal.delete(item.id);
-          throw new Error("Frame memory budget is full");
+        if (retainFrames) {
+          frames.set(item.id, receipt);
+          temporal.set(
+            item.id,
+            state.pipeline.temporalEnabled
+              ? temporalWindow(oldWindow ?? [], receipt)
+              : [receipt],
+          );
+          trimHistory();
+          if (retainedBytes() > MAX_HISTORY_BYTES) {
+            if (latest) frames.set(item.id, latest);
+            else frames.delete(item.id);
+            if (oldWindow) temporal.set(item.id, oldWindow);
+            else temporal.delete(item.id);
+            throw new Error("Frame memory budget is full");
+          }
+        } else {
+          captureOrder.set(item.id, {
+            capturedAt: command.frame.capturedAt,
+            mono: receipt.mono,
+            age: receipt.age,
+          });
         }
         seen.push(command.frame.id);
         seenFrames.set(item.id, seen.slice(-64));
@@ -1235,6 +1288,7 @@ export function createService(options: ServiceOptions = {}): Service {
         )
           throw new Error("Selected sources exceed evidence time skew");
         state.chat.push({
+          ...provenance(),
           id: randomUUID(),
           role: "user",
           text: command.text,
@@ -1271,6 +1325,13 @@ export function createService(options: ServiceOptions = {}): Service {
         return enqueue("plan", receipts, command.goal);
       }
       case "automation.cancel": {
+        // Native review cleanup names the completed proposal. It must not
+        // cancel a newer goal which has already cleared or replaced that plan.
+        if (
+          command.planId !== undefined &&
+          state.pendingPlan?.id !== command.planId
+        )
+          break;
         state.pendingPlan = undefined;
         rejectQueued(
           (job) => job.kind === "plan",
@@ -1360,6 +1421,7 @@ export function createService(options: ServiceOptions = {}): Service {
         if (active?.job.kind === "summary") active.controller.abort();
         cancelSummary("History summary superseded");
         const summary: HistorySummary = {
+          ...provenance(),
           id: randomUUID(),
           status: "queued",
           question:
@@ -1382,6 +1444,7 @@ export function createService(options: ServiceOptions = {}): Service {
         };
         state.historySummary = summary;
         const job: Job = {
+          agentRevision: options.agent?.revision(),
           kind: "summary",
           frames: [],
           question: summary.question,
@@ -1412,6 +1475,8 @@ export function createService(options: ServiceOptions = {}): Service {
           frames.delete(id);
           temporal.delete(id);
         }
+      for (const [id, receipt] of captureOrder)
+        if (frameAge(receipt) > DISPATCH_AGE) captureOrder.delete(id);
       const old = state.observations.map((item) => item.status).join();
       const oldRules = state.pipeline.rules.map((item) => item.status).join();
       const hadPlan = !!state.pendingPlan;
@@ -1432,6 +1497,60 @@ export function createService(options: ServiceOptions = {}): Service {
     command,
     snapshot,
     tick,
+    synchronizeSources(sources) {
+      if (disposed) throw new Error("Service is disposed");
+      if (sources.length > maxSources)
+        throw new Error("Source scope exceeds capacity");
+      const changed = state.sources.filter((old) => {
+        const next = sources.find((item) => item.id === old.id);
+        return !next || next.revision !== old.revision;
+      });
+      for (const item of changed) {
+        frames.delete(item.id);
+        temporal.delete(item.id);
+        resetRules(item.id);
+        motions.delete(item.id);
+        eligibility.delete(item.id);
+        dispatched.delete(item.id);
+        seenFrames.delete(item.id);
+        captureOrder.delete(item.id);
+        if (state.pendingPlan?.sourceId === item.id)
+          state.pendingPlan = undefined;
+        if (active && jobSourceIds(active.job).includes(item.id)) {
+          active.controller.abort();
+          if (active.job.kind === "summary")
+            cancelSummary("Source assignment was changed or revoked");
+        }
+        rejectQueued(
+          (job) => jobSourceIds(job).includes(item.id),
+          "Source assignment was changed or revoked",
+        );
+        for (const observation of state.observations.filter((observation) =>
+          observation.sourceIds.includes(item.id),
+        ))
+          observationAges.delete(observation.id);
+      }
+      state.sources = structuredClone(sources);
+      for (const rule of state.pipeline.rules)
+        if (
+          !rule.sourceIds.every((id) => sources.some((item) => item.id === id))
+        ) {
+          rule.enabled = false;
+          rule.status = "unknown";
+        }
+      if (
+        state.session === "stopped" &&
+        sources.some((item) => item.status === "live")
+      )
+        state.session = "idle";
+      emit(true);
+    },
+    invalidateContext(message) {
+      if (disposed) return;
+      invalidate(message);
+      discovery?.abort();
+      emit(true);
+    },
     dispose() {
       if (disposed) return;
       invalidate("Service disposed");
@@ -1443,6 +1562,7 @@ export function createService(options: ServiceOptions = {}): Service {
       temporal.clear();
       semantic.clear();
       seenFrames.clear();
+      captureOrder.clear();
       motions.clear();
       observationAges.clear();
       state.chat = [];

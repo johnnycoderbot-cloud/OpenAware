@@ -52,6 +52,8 @@ const key = z
 export const automationPlanSchema = z
   .object({
     id: z.string().uuid(),
+    agentId: z.string().uuid().optional(),
+    agentRevision: z.number().int().positive().optional(),
     sourceId: z.string().uuid(),
     sourceRevision: z.number().int().positive(),
     capturedAt: z.number().finite().positive(),
@@ -65,6 +67,10 @@ export const automationPlanSchema = z
       .max(8),
   })
   .strict()
+  .refine(
+    (p) => (p.agentId === undefined) === (p.agentRevision === undefined),
+    "Agent identity and revision must be supplied together",
+  )
   .refine(
     (p) =>
       p.expiresAt > p.createdAt &&
@@ -114,6 +120,8 @@ export function planDigest(plan: AutomationPlan): string {
 /** Fresh, native evidence. The UI and model cannot manufacture this object. */
 export interface Inspection {
   acquiredAt: number;
+  agentId?: string;
+  agentRevision?: number;
   sourceId: string;
   sourceRevision: number;
   planDigest: string;
@@ -260,6 +268,8 @@ export class ActionBroker {
             before.sourceId !== plan.sourceId ||
             before.sourceRevision !== plan.sourceRevision ||
             before.planDigest !== digest ||
+            before.agentId !== plan.agentId ||
+            before.agentRevision !== plan.agentRevision ||
             before.modelId !== plan.modelId
           )
             throw new Error("Inspection authority changed");
@@ -304,6 +314,8 @@ export class ActionBroker {
           if (
             after.sourceId !== before.sourceId ||
             after.planDigest !== digest ||
+            after.agentId !== before.agentId ||
+            after.agentRevision !== before.agentRevision ||
             after.modelId !== before.modelId ||
             after.sourceRevision !== plan.sourceRevision ||
             after.sourceRevision !== before.sourceRevision ||

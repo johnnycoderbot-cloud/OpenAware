@@ -1,8 +1,8 @@
 {
   "name": "openaware",
-  "version": "0.3.3",
+  "version": "0.4.0",
   "private": true,
-  "description": "Live desktop and camera awareness with cooperating Observer and Operator AI roles",
+  "description": "Independent AI agents monitoring selected desktops, cameras and videos",
   "license": "MIT",
   "author": "OpenAware contributors",
   "main": "dist/main.cjs",

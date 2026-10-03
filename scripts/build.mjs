@@ -6,6 +6,17 @@ import { mkdir, copyFile } from "node:fs/promises";
 await mkdir("dist", { recursive: true });
 await mkdir("dist/capture", { recursive: true });
 await copyFile("apps/desktop/capture/index.html", "dist/capture/index.html");
+await copyFile("apps/desktop/capture/video.html", "dist/capture/video.html");
+await bundle({
+  entryPoints: ["apps/desktop/capture/video.ts"],
+  outfile: "dist/capture/video.js",
+  bundle: true,
+  platform: "browser",
+  format: "iife",
+  target: "chrome150",
+  sourcemap: false,
+  logLevel: "info",
+});
 await bundle({
   entryPoints: ["apps/desktop/capture/capture.ts"],
   outfile: "dist/capture/capture.js",

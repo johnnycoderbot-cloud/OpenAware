@@ -1,12 +1,27 @@
 import { z } from "zod";
 import packageMetadata from "../../../package.json" with { type: "json" };
 
-export const MAX_SOURCES = 4;
+export const MAX_SOURCES = 16;
+export const MAX_AGENT_SOURCES = 4;
+export const MAX_AGENTS = 4;
+export const DEFAULT_AGENT_ID = "00000000-0000-4000-8000-000000000001";
 export const MAX_FRAME_BYTES = 1_048_576;
 export const MAX_SEMANTIC_RULES = 8;
 export type ProviderKind = "lmstudio" | "ollama" | "llamacpp";
 export type SourceKind =
-  "demo" | "camera" | "virtual_camera" | "monitor" | "window";
+  | "demo"
+  | "camera"
+  | "virtual_camera"
+  | "monitor"
+  | "window"
+  | "video_file"
+  | "video_url"
+  | "web_video";
+export type AgentRole = "observer" | "operator";
+export interface AgentProvenance {
+  agentId?: string;
+  agentRevision?: number;
+}
 export type SessionStatus = "idle" | "monitoring" | "paused" | "stopped";
 export interface Mask {
   x: number;
@@ -55,7 +70,7 @@ export interface Frame {
   dataUrl: string;
   motion?: number;
 }
-export interface Observation {
+export interface Observation extends AgentProvenance {
   id: string;
   sourceIds: string[];
   sourceNames: string[];
@@ -99,7 +114,7 @@ export interface CaptionSearchResult {
   query: string;
   matches: { observation: Observation; score: number }[];
 }
-export interface HistorySummary {
+export interface HistorySummary extends AgentProvenance {
   id: string;
   status: "queued" | "running" | "completed" | "failed" | "cancelled";
   question: string;
@@ -117,7 +132,7 @@ export interface HistorySummary {
   bindingRevision: number;
   epoch: number;
 }
-export interface TimelineEvent {
+export interface TimelineEvent extends AgentProvenance {
   id: string;
   type: "motion" | "observation" | "alert" | "system" | "error" | "action";
   sourceId?: string;
@@ -128,7 +143,7 @@ export interface TimelineEvent {
   ruleRevision?: number;
   observationId?: string;
 }
-export interface ChatMessage {
+export interface ChatMessage extends AgentProvenance {
   id: string;
   role: "user" | "assistant";
   text: string;
@@ -144,7 +159,7 @@ export interface AutomationStep {
   key?: string;
   description: string;
 }
-export interface AutomationPlan {
+export interface AutomationPlan extends AgentProvenance {
   id: string;
   sourceId: string;
   sourceRevision: number;
@@ -161,6 +176,8 @@ export interface ActionResult {
   message: string;
 }
 export interface Snapshot {
+  agents: AgentSnapshot[];
+  activeAgentId: string;
   version: string;
   session: SessionStatus;
   epoch: number;
@@ -176,6 +193,21 @@ export interface Snapshot {
   pendingPlan?: AutomationPlan;
   pipeline: PipelineState;
   historySummary?: HistorySummary;
+}
+export type AgentSnapshot = Omit<
+  Snapshot,
+  "version" | "sources" | "agents" | "activeAgentId"
+> & {
+  id: string;
+  name: string;
+  role: AgentRole;
+  revision: number;
+  sourceIds: string[];
+};
+export interface VideoSourceSelection {
+  kind: "video_file" | "video_url" | "web_video";
+  deviceId: string;
+  name: string;
 }
 export interface CaptureChoice {
   id: string;
@@ -197,7 +229,7 @@ const id = z.string().uuid();
 const sourceIds = z
   .array(id)
   .min(1)
-  .max(MAX_SOURCES)
+  .max(MAX_AGENT_SOURCES)
   .refine((ids) => new Set(ids).size === ids.length);
 const frame = z
   .object({
@@ -218,6 +250,33 @@ export const commandSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("state.get") }).strict(),
   z
     .object({
+      type: z.literal("agent.add"),
+      name: z.string().trim().min(1).max(80),
+      role: z.enum(["observer", "operator"]),
+    })
+    .strict(),
+  z.object({ type: z.literal("agent.select"), agentId: id }).strict(),
+  z.object({ type: z.literal("agent.remove"), agentId: id }).strict(),
+  z
+    .object({
+      type: z.literal("agent.update"),
+      agentId: id,
+      patch: z
+        .object({
+          name: z.string().trim().min(1).max(80).optional(),
+          role: z.enum(["observer", "operator"]).optional(),
+          sourceIds: z
+            .array(id)
+            .max(MAX_AGENT_SOURCES)
+            .refine((ids) => new Set(ids).size === ids.length)
+            .optional(),
+        })
+        .strict()
+        .refine((patch) => Object.keys(patch).length > 0),
+    })
+    .strict(),
+  z
+    .object({
       type: z.literal("source.add"),
       source: z
         .object({
@@ -229,10 +288,20 @@ export const commandSchema = z.discriminatedUnion("type", [
             "virtual_camera",
             "monitor",
             "window",
+            "video_file",
+            "video_url",
+            "web_video",
           ]),
           deviceId: z.string().max(512),
         })
-        .strict(),
+        .strict()
+        .refine(
+          (source) =>
+            !["video_file", "video_url", "web_video"].includes(source.kind) ||
+            /^video:[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+              source.deviceId,
+            ),
+        ),
     })
     .strict(),
   z
@@ -268,6 +337,7 @@ export const commandSchema = z.discriminatedUnion("type", [
   z
     .object({
       type: z.literal("provider.discover"),
+      agentId: id.optional(),
       provider: z.enum(["lmstudio", "ollama", "llamacpp"]),
       endpoint: z.string().max(256),
       token: z.string().max(4096).optional(),
@@ -276,40 +346,71 @@ export const commandSchema = z.discriminatedUnion("type", [
   z
     .object({
       type: z.literal("provider.select"),
+      agentId: id.optional(),
       modelId: z.string().min(1).max(256),
     })
     .strict(),
-  z.object({ type: z.literal("provider.probe"), frame }).strict(),
-  z.object({ type: z.literal("monitor.start") }).strict(),
-  z.object({ type: z.literal("monitor.pause") }).strict(),
+  z
+    .object({
+      type: z.literal("provider.probe"),
+      agentId: id.optional(),
+      frame,
+    })
+    .strict(),
+  z
+    .object({ type: z.literal("monitor.start"), agentId: id.optional() })
+    .strict(),
+  z
+    .object({ type: z.literal("monitor.pause"), agentId: id.optional() })
+    .strict(),
   z.object({ type: z.literal("session.stop") }).strict(),
   z
     .object({
       type: z.literal("conversation.ask"),
+      agentId: id.optional(),
       text: z.string().trim().min(1).max(4000),
       sourceIds,
     })
     .strict(),
-  z.object({ type: z.literal("conversation.cancel") }).strict(),
+  z
+    .object({ type: z.literal("conversation.cancel"), agentId: id.optional() })
+    .strict(),
   z
     .object({
       type: z.literal("automation.plan"),
+      agentId: id.optional(),
       goal: z.string().trim().min(1).max(2000),
       sourceId: id,
     })
     .strict(),
-  z.object({ type: z.literal("automation.cancel") }).strict(),
-  z.object({ type: z.literal("events.ack"), eventId: id }).strict(),
-  z.object({ type: z.literal("history.clear") }).strict(),
+  z
+    .object({
+      type: z.literal("automation.cancel"),
+      agentId: id.optional(),
+      planId: id.optional(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("events.ack"),
+      agentId: id.optional(),
+      eventId: id,
+    })
+    .strict(),
+  z
+    .object({ type: z.literal("history.clear"), agentId: id.optional() })
+    .strict(),
   z
     .object({
       type: z.literal("pipeline.configure"),
+      agentId: id.optional(),
       temporalEnabled: z.boolean(),
     })
     .strict(),
   z
     .object({
       type: z.literal("rule.add"),
+      agentId: id.optional(),
       name: z.string().trim().min(1).max(80),
       condition: z.string().trim().min(1).max(512),
       sourceIds,
@@ -318,6 +419,7 @@ export const commandSchema = z.discriminatedUnion("type", [
   z
     .object({
       type: z.literal("rule.update"),
+      agentId: id.optional(),
       ruleId: id,
       patch: z
         .object({
@@ -330,10 +432,17 @@ export const commandSchema = z.discriminatedUnion("type", [
         .refine((patch) => Object.keys(patch).length > 0),
     })
     .strict(),
-  z.object({ type: z.literal("rule.remove"), ruleId: id }).strict(),
+  z
+    .object({
+      type: z.literal("rule.remove"),
+      agentId: id.optional(),
+      ruleId: id,
+    })
+    .strict(),
   z
     .object({
       type: z.literal("history.search"),
+      agentId: id.optional(),
       query: z.string().trim().min(1).max(512),
       sourceIds: sourceIds.optional(),
       from: z.number().finite().nonnegative().optional(),
@@ -350,6 +459,7 @@ export const commandSchema = z.discriminatedUnion("type", [
   z
     .object({
       type: z.literal("history.summarize"),
+      agentId: id.optional(),
       sourceIds: sourceIds.optional(),
       from: z.number().finite().nonnegative().optional(),
       to: z.number().finite().nonnegative().optional(),
@@ -392,6 +502,12 @@ export interface OpenAwareBridge {
   invoke<T = Snapshot>(command: Command): Promise<T>;
   onState(callback: (state: Snapshot) => void): () => void;
   listDesktopSources(): Promise<CaptureChoice[]>;
+  chooseVideoFile(): Promise<VideoSourceSelection | undefined>;
+  prepareVideoUrl(
+    url: string,
+    mode: "direct" | "page",
+  ): Promise<VideoSourceSelection>;
+  openVideoSource(sourceId: string): Promise<void>;
   selectDesktopSource(id: string): Promise<void>;
   startDesktopCapture(sourceId: string, captureId: string): Promise<void>;
   stopDesktopCapture(sourceId: string, captureId: string): Promise<void>;
@@ -404,23 +520,45 @@ export interface OpenAwareBridge {
   onDesktopState(callback: (state: DesktopState) => void): () => void;
   quit(): Promise<void>;
 }
-export const initialSnapshot = (): Snapshot => ({
-  version: packageMetadata.version,
-  session: "idle",
-  epoch: 1,
-  sources: [],
-  binding: {
-    provider: "lmstudio",
-    endpoint: "http://127.0.0.1:1234",
-    modelId: "",
-    revision: 1,
-    status: "unconfigured",
-  },
-  models: [],
-  observations: [],
-  events: [],
-  chat: [],
-  pipeline: { temporalEnabled: true, rules: [] },
-  busy: false,
-  queueSize: 0,
-});
+export const initialSnapshot = (): Snapshot => {
+  const state: Snapshot = {
+    agents: [],
+    activeAgentId: DEFAULT_AGENT_ID,
+    version: packageMetadata.version,
+    session: "idle",
+    epoch: 1,
+    sources: [],
+    binding: {
+      provider: "lmstudio",
+      endpoint: "http://127.0.0.1:1234",
+      modelId: "",
+      revision: 1,
+      status: "unconfigured",
+    },
+    models: [],
+    observations: [],
+    events: [],
+    chat: [],
+    pipeline: { temporalEnabled: true, rules: [] },
+    busy: false,
+    queueSize: 0,
+  };
+  const {
+    version: _version,
+    sources: _sources,
+    agents: _agents,
+    activeAgentId: _activeAgentId,
+    ...aliases
+  } = state;
+  state.agents = [
+    {
+      ...aliases,
+      id: DEFAULT_AGENT_ID,
+      name: "Agent 1",
+      role: "operator",
+      revision: 1,
+      sourceIds: [],
+    },
+  ];
+  return state;
+};

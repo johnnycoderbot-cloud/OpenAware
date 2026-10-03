@@ -7,6 +7,7 @@ import {
   ipcMain,
   Menu,
   nativeImage,
+  protocol,
   screen,
   session,
   Tray,
@@ -36,7 +37,10 @@ import {
   inspectWindowsTarget,
 } from "../../../packages/actions/src/windows";
 import { ServiceClient } from "./service-client";
+import { assertAgentPlanAuthority } from "./agent-action-authority";
 import { DesktopCaptureBroker } from "./desktop-capture";
+import { VideoCaptureBroker, VIDEO_SCHEME } from "./video-capture";
+import { VideoSourceRegistry } from "./video-sources";
 import { createTrayIcon } from "./tray-icon";
 import { DesktopBackgroundController, launchModeFromArgs } from "./background";
 import { startLocalApi, type LocalApi } from "./local-api";
@@ -50,6 +54,13 @@ const launchMode = launchModeFromArgs(process.argv);
 if (process.argv.includes("--headless"))
   app.commandLine.removeSwitch("headless");
 const testMode = process.env.OPENAWARE_TEST === "1";
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: VIDEO_SCHEME,
+    privileges: { standard: true, secure: true, stream: true },
+  },
+]);
+const videoSources = new VideoSourceRegistry();
 let window: BrowserWindow | undefined;
 let tray: Tray | undefined;
 let trayMenuMode: boolean | undefined;
@@ -94,10 +105,25 @@ function broadcast(next: Snapshot): void {
     window.webContents.send("openaware:state", next);
   updateTray();
 }
+function cancelPendingSummary(
+  summary: Snapshot["historySummary"],
+  message: string,
+): Snapshot["historySummary"] {
+  return summary && ["queued", "running"].includes(summary.status)
+    ? {
+        ...summary,
+        status: "cancelled",
+        completedAt: Date.now(),
+        error: message,
+      }
+    : summary;
+}
 const service = new ServiceClient(broadcast, (message) => {
   broker.revoke();
   desktopConnections.clear();
   desktopCapture.stopAll();
+  videoCapture.stopAll();
+  videoSources.clear();
   selectedDevices.clear();
   listedDesktopDevices.clear();
   captureGeneration += 1;
@@ -110,7 +136,17 @@ const service = new ServiceClient(broadcast, (message) => {
     busy: false,
     queueSize: 0,
     pendingPlan: undefined,
+    historySummary: cancelPendingSummary(state.historySummary, message),
     sources: state.sources.map((source) => ({ ...source, status: "stopped" })),
+    agents: state.agents.map((agent) => ({
+      ...agent,
+      session: "stopped",
+      busy: false,
+      queueSize: 0,
+      pendingPlan: undefined,
+      historySummary: cancelPendingSummary(agent.historySummary, message),
+      lastError: message,
+    })),
     lastError: message,
   });
   if (window && !window.isDestroyed())
@@ -149,11 +185,44 @@ const desktopCapture = new DesktopCaptureBroker({
       .catch(() => {});
   },
 });
+const videoCapture = new VideoCaptureBroker({
+  registry: videoSources,
+  onFrame: (packet) => {
+    const connection = desktopConnections.get(packet.sourceId);
+    if (
+      connection?.captureId !== packet.captureId ||
+      connection.deviceId !== packet.deviceId
+    )
+      return;
+    selectedDevices.add(packet.deviceId);
+    if (window && !window.isDestroyed())
+      window.webContents.send("openaware:desktop-frame", packet);
+  },
+  onError: (sourceId, message, captureId) => {
+    if (desktopConnections.get(sourceId)?.captureId !== captureId) return;
+    stopDesktopConnection(sourceId, captureId);
+    broker.revoke();
+    if (window && !window.isDestroyed())
+      window.webContents.send("openaware:desktop-error", {
+        sourceId,
+        message,
+        captureId,
+      });
+    void service
+      .request({
+        type: "source.update",
+        sourceId,
+        patch: { status: "unavailable", error: message },
+      })
+      .catch(() => {});
+  },
+});
 function stopDesktopConnection(sourceId: string, captureId?: string): void {
   const connection = desktopConnections.get(sourceId);
   if (captureId && connection?.captureId !== captureId) return;
   desktopConnections.delete(sourceId);
   desktopCapture.stop(sourceId, captureId);
+  videoCapture.stop(sourceId, captureId);
   if (
     connection?.deviceId &&
     ![...desktopConnections.values()].some(
@@ -227,6 +296,7 @@ function stopImmediately(): void {
   broker.revoke();
   desktopConnections.clear();
   desktopCapture.stopAll();
+  videoCapture.stopAll();
   selectedDevices.clear();
   listedDesktopDevices.clear();
   captureGeneration += 1;
@@ -239,7 +309,16 @@ function stopImmediately(): void {
     busy: false,
     queueSize: 0,
     pendingPlan: undefined,
+    historySummary: cancelPendingSummary(state.historySummary, "Stopped."),
     sources: state.sources.map((source) => ({ ...source, status: "stopped" })),
+    agents: state.agents.map((agent) => ({
+      ...agent,
+      session: "stopped",
+      busy: false,
+      queueSize: 0,
+      pendingPlan: undefined,
+      historySummary: cancelPendingSummary(agent.historySummary, "Stopped."),
+    })),
   });
   if (window && !window.isDestroyed())
     window.webContents.send("openaware:stop");
@@ -255,6 +334,7 @@ async function inspect(
   if (signal.aborted) throw new Error("Actions stopped");
   const authoritative = await service.request<Snapshot>({ type: "state.get" });
   if (signal.aborted) throw new Error("Actions stopped");
+  assertAgentPlanAuthority(authoritative, plan);
   const source = authoritative.sources.find(
     (item) => item.id === plan.sourceId,
   );
@@ -335,6 +415,8 @@ async function inspect(
   const nativeTarget = await inspectWindowsTarget(step, bounds, point, signal);
   return {
     acquiredAt,
+    agentId: plan.agentId,
+    agentRevision: plan.agentRevision,
     sourceId: source.id,
     sourceRevision: source.revision,
     planDigest: planDigest(plan),
@@ -388,6 +470,9 @@ const broker = new ActionBroker({
     if (
       signal.aborted ||
       authoritative.session === "stopped" ||
+      authoritative.activeAgentId !== evidence.agentId ||
+      authoritative.agents.find((agent) => agent.id === evidence.agentId)
+        ?.revision !== evidence.agentRevision ||
       authoritative.epoch !== evidence.epoch ||
       Date.now() >= deadline
     )
@@ -409,6 +494,7 @@ const broker = new ActionBroker({
       authoritative.binding.status !== "verified"
     )
       throw new Error("Monitor, plan, or model authority changed");
+    assertAgentPlanAuthority(authoritative, authoritative.pendingPlan);
     await applyWindowsStep(step, evidence, deadline, signal);
   },
 });
@@ -430,6 +516,7 @@ function registerIpc(): void {
   ipcMain.handle("openaware:invoke", async (event, raw: unknown) => {
     assertSender(event);
     const command = commandSchema.parse(raw);
+    let newlyClaimedVideo: string | undefined;
     if (command.type === "session.stop") {
       stopImmediately();
       return state;
@@ -446,11 +533,26 @@ function registerIpc(): void {
       )
         throw new Error("List and choose this desktop source first");
     }
+    if (
+      command.type === "source.add" &&
+      ["video_file", "video_url", "web_video"].includes(command.source.kind)
+    ) {
+      if (
+        videoSources.claim(
+          command.source.deviceId,
+          command.source.kind,
+          command.source.id,
+        )
+      )
+        newlyClaimedVideo = command.source.deviceId;
+    }
     if (command.type === "source.update" && command.patch.status === "live") {
       const source = state.sources.find((item) => item.id === command.sourceId);
       if (
         source &&
-        ["monitor", "window"].includes(source.kind) &&
+        ["monitor", "window", "video_file", "video_url", "web_video"].includes(
+          source.kind,
+        ) &&
         !selectedDevices.has(source.deviceId)
       )
         throw new Error("Grant desktop capture before starting this source");
@@ -464,6 +566,9 @@ function registerIpc(): void {
       stopDesktopConnection(command.sourceId);
     if (
       [
+        "agent.select",
+        "agent.update",
+        "agent.remove",
         "source.remove",
         "source.update",
         "provider.discover",
@@ -480,7 +585,47 @@ function registerIpc(): void {
       ].includes(command.type)
     )
       broker.revoke();
-    return service.request(command);
+    try {
+      const result = await service.request(command);
+      if (command.type === "source.remove")
+        videoSources.remove(command.sourceId);
+      return result;
+    } catch (error) {
+      if (command.type === "source.add" && newlyClaimedVideo)
+        videoSources.rollback(newlyClaimedVideo, command.source.id);
+      throw error;
+    }
+  });
+  ipcMain.handle("openaware:choose-video-file", async (event) => {
+    assertSender(event);
+    const generation = captureGeneration;
+    const result = await dialog.showOpenDialog(window!, {
+      title: "Choose a video to monitor",
+      properties: ["openFile"],
+      filters: [
+        { name: "Video", extensions: ["mp4", "webm", "mov", "m4v", "ogv"] },
+      ],
+    });
+    if (
+      result.canceled ||
+      !result.filePaths[0] ||
+      generation !== captureGeneration
+    )
+      return undefined;
+    return videoSources.file(result.filePaths[0]);
+  });
+  ipcMain.handle(
+    "openaware:prepare-video-url",
+    (event, url: unknown, mode: unknown) => {
+      assertSender(event);
+      return videoSources.url(url, mode);
+    },
+  );
+  ipcMain.handle("openaware:open-video-source", (event, sourceId: unknown) => {
+    assertSender(event);
+    if (typeof sourceId !== "string" || !/^[0-9a-f-]{36}$/i.test(sourceId))
+      throw new Error("Invalid video source.");
+    videoCapture.open(sourceId);
   });
   ipcMain.handle("openaware:list-desktop", async (event) => {
     assertSender(event);
@@ -521,7 +666,6 @@ function registerIpc(): void {
         !/^[0-9a-f-]{36}$/i.test(captureId)
       )
         throw new Error("Invalid desktop capture connection");
-      if (testMode) throw new Error("Desktop capture is disabled in test mode");
       // Install ownership before any await, so Stop/replacement also cancels a
       // start still waiting for authoritative state. The token is not authority;
       // main derives the native target exclusively from the registered source.
@@ -543,14 +687,31 @@ function registerIpc(): void {
         );
         if (
           !source ||
-          (source.kind !== "monitor" && source.kind !== "window") ||
-          !source.deviceId.startsWith(
-            source.kind === "monitor" ? "screen:" : "window:",
-          )
+          ![
+            "monitor",
+            "window",
+            "video_file",
+            "video_url",
+            "web_video",
+          ].includes(source.kind)
         )
           throw new Error("Choose a registered desktop source first");
         connection.deviceId = source.deviceId;
-        await desktopCapture.start(sourceId, source.deviceId, captureId);
+        if (["video_file", "video_url", "web_video"].includes(source.kind)) {
+          if (!videoSources.get(source.deviceId, source.kind, sourceId))
+            throw new Error("Choose a registered video first.");
+          await videoCapture.start(sourceId, source.deviceId, captureId);
+        } else {
+          if (testMode)
+            throw new Error("Desktop capture is disabled in test mode");
+          if (
+            !source.deviceId.startsWith(
+              source.kind === "monitor" ? "screen:" : "window:",
+            )
+          )
+            throw new Error("Choose a registered desktop source first.");
+          await desktopCapture.start(sourceId, source.deviceId, captureId);
+        }
         if (desktopConnections.get(sourceId) !== connection)
           throw new Error("Desktop capture connection was stopped.");
       } catch (error) {
@@ -596,7 +757,13 @@ function registerIpc(): void {
       // Take inspection only after the workspace is exposed. Never reuse evidence from before minimize.
       await new Promise((resolve) => setTimeout(resolve, 250));
       const results = await broker.execute(plan);
-      await service.request({ type: "automation.cancel" }).catch(() => {});
+      await service
+        .request({
+          type: "automation.cancel",
+          agentId: plan.agentId,
+          planId: plan.id,
+        })
+        .catch(() => {});
       return results;
     } finally {
       if (reviewingWindow && !reviewingWindow.isDestroyed())
@@ -830,6 +997,8 @@ app.on("before-quit", () => {
   void localApi?.close().catch(() => {});
   localApi = undefined;
   desktopCapture.close();
+  videoCapture.close();
+  videoSources.clear();
   desktopConnections.clear();
   desktop.beginQuit();
 });

@@ -42,6 +42,8 @@ function fixture(input: AutomationPlan) {
   let inspections = 0;
   const inspection = (): Inspection => ({
     acquiredAt: now,
+    agentId: input.agentId,
+    agentRevision: input.agentRevision,
     sourceId: input.sourceId,
     sourceRevision: input.sourceRevision,
     planDigest: planDigest(input),
@@ -217,6 +219,8 @@ test("wall clock rollback cannot extend monotonic plan lifetime", async () => {
 });
 for (const field of [
   "sourceId",
+  "agentId",
+  "agentRevision",
   "sourceRevision",
   "planDigest",
   "modelId",
@@ -257,6 +261,39 @@ test("stale inspection cannot reach native input", async () => {
   assert.match(
     (await new ActionBroker(fake.dependencies).execute(input))[0].message,
     /stale/,
+  );
+  assert.equal(fake.effects(), 0);
+});
+test("agent identity is included in the plan digest and requires its revision", () => {
+  const input = { ...plan(), agentId: randomUUID(), agentRevision: 1 };
+  assert.notEqual(
+    planDigest(input),
+    planDigest({ ...input, agentId: randomUUID() }),
+  );
+  assert.notEqual(
+    planDigest(input),
+    planDigest({ ...input, agentRevision: 2 }),
+  );
+  assert.equal(
+    automationPlanSchema.safeParse({ ...input, agentRevision: undefined })
+      .success,
+    false,
+  );
+  assert.equal(
+    automationPlanSchema.safeParse({ ...input, agentId: undefined }).success,
+    false,
+  );
+});
+test("a different agent cannot supply the first inspection for a plan", async () => {
+  const input = { ...plan(), agentId: randomUUID(), agentRevision: 1 };
+  const fake = fixture(input);
+  fake.dependencies.inspect = async () => ({
+    ...fake.inspection(),
+    agentId: randomUUID(),
+  });
+  assert.equal(
+    (await new ActionBroker(fake.dependencies).execute(input))[0].status,
+    "failed",
   );
   assert.equal(fake.effects(), 0);
 });

@@ -346,11 +346,18 @@ async function deskControls(page: Page) {
       .count()
   )
     await extra.getByTestId("switch-lower-panel").click();
-  const split = extra.getByTestId("split-agent-desk");
-  if ((await split.getAttribute("aria-pressed")) === "false")
-    await split.click();
+  await page.evaluate(async () => {
+    const state = await window.openAware!.invoke({ type: "state.get" });
+    if (state.agents.length < 2)
+      await window.openAware!.invoke({
+        type: "agent.add",
+        name: "Agent 2",
+        role: "observer",
+      });
+  });
+  const addAgent = extra.getByTestId("add-agent");
   for (const control of [
-    split,
+    addAgent,
     extra.getByTestId("switch-lower-panel"),
     extra.getByRole("combobox", { name: "Arrange Agent desk", exact: true }),
   ]) {
@@ -778,7 +785,7 @@ test("one workspace docks direct live sources and sidebar panes without restarti
       );
       await fullyContained(
         assistantPane.getByRole("combobox", {
-          name: "Arrange Workspace assistant",
+          name: "Arrange Agent 1",
           exact: true,
         }),
         ".dock-pane-handle",
@@ -793,7 +800,7 @@ test("one workspace docks direct live sources and sidebar panes without restarti
         ".dock-pane-handle",
         "Labeled Add source",
       );
-      await expect(page.getByTestId("add-source")).toBeDisabled();
+      await expect(page.getByTestId("add-source")).toBeEnabled();
       for (const source of [first, second, camera, virtual]) {
         const preview = (await source
           .locator(".source-preview")
@@ -1046,7 +1053,7 @@ test("one workspace docks direct live sources and sidebar panes without restarti
     await composer.fill(draft);
     firstBounds = (await firstPane.boundingBox())!;
     await page
-      .getByRole("button", { name: "Move Workspace assistant", exact: true })
+      .getByRole("button", { name: "Move Agent 1", exact: true })
       .dragTo(firstPane, {
         targetPosition: { x: 5, y: Math.floor(firstBounds.height / 2) },
       });
@@ -1058,7 +1065,7 @@ test("one workspace docks direct live sources and sidebar panes without restarti
     await reset();
     await page
       .getByRole("combobox", {
-        name: "Arrange Workspace assistant",
+        name: "Arrange Agent 1",
         exact: true,
       })
       .selectOption(`${firstId}/top`);
@@ -1111,7 +1118,7 @@ test("one workspace docks direct live sources and sidebar panes without restarti
     await viewport(app, page, 800, 720);
     await page
       .getByRole("combobox", {
-        name: "Arrange Workspace assistant",
+        name: "Arrange Agent 1",
         exact: true,
       })
       .selectOption(`${firstId}/top`);
@@ -1286,7 +1293,7 @@ test("four generated displays start in readable 2x2 panes and can scroll as one 
       ".dock-pane-handle",
       "Minimum-width Add source",
     );
-    await expect(page.getByTestId("add-source")).toBeDisabled();
+    await expect(page.getByTestId("add-source")).toBeEnabled();
     const held = await page.evaluateHandle(
       (ids) =>
         ids.map((id) =>

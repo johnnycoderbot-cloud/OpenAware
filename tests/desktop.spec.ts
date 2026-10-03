@@ -113,14 +113,13 @@ test("desktop runs synthetic preview, scopes local vision, stops acquisition, an
         .getByTestId("agent-desk-outline")
         .evaluate((node) => getComputedStyle(node).filter),
     ).toContain("drop-shadow");
-    await lowerPane.getByTestId("split-agent-desk").click();
-    await expect(lowerPane.getByTestId("agent-desk-outline")).toHaveCount(2);
+    await expect(lowerPane.getByTestId("add-agent")).toBeVisible();
     await expect(
       lowerPane.getByText("Shared model", { exact: true }),
-    ).toBeVisible();
+    ).toHaveCount(0);
     await lowerPane
       .getByRole("button", {
-        name: "Needs agent: configure Observer",
+        name: "Needs agent: configure Agent 1",
         exact: true,
       })
       .click();
@@ -129,7 +128,10 @@ test("desktop runs synthetic preview, scopes local vision, stops acquisition, an
     ).toBeVisible();
     await page.getByRole("button", { name: "Overview", exact: true }).click();
     await page
-      .getByRole("button", { name: "Add a screen or camera", exact: true })
+      .getByRole("button", {
+        name: "Add a screen, camera or video",
+        exact: true,
+      })
       .click();
     await expect(
       page.getByRole("dialog", { name: "Add a source", exact: true }),
@@ -192,7 +194,7 @@ test("desktop runs synthetic preview, scopes local vision, stops acquisition, an
         modelId: "fixture-vision",
       });
     }, `http://127.0.0.1:${address.port}`);
-    await expect(lowerPane.getByTestId("agent-desk-outline")).toHaveCount(2);
+    await expect(lowerPane.getByTestId("agent-desk-outline")).toHaveCount(1);
     await expect(lowerPane.getByTestId("agent-desk-agent")).toHaveCount(0);
     await page.evaluate(async (id) => {
       const state = await window.openAware!.invoke({ type: "state.get" });
@@ -235,9 +237,9 @@ test("desktop runs synthetic preview, scopes local vision, stops acquisition, an
       )
       .toBe("verified");
     await expect(lowerPane.getByTestId("agent-desk-outline")).toHaveCount(0);
-    await expect(lowerPane.getByTestId("agent-desk-agent")).toHaveCount(2);
+    await expect(lowerPane.getByTestId("agent-desk-agent")).toHaveCount(1);
     await expect(
-      lowerPane.locator('[data-agent-seat="observer"]'),
+      lowerPane.locator("[data-agent-seat]").first(),
     ).toHaveAttribute("data-state", "paused");
     await page.evaluate(async () => {
       await window.openAware!.invoke({ type: "monitor.start" });
@@ -252,11 +254,8 @@ test("desktop runs synthetic preview, scopes local vision, stops acquisition, an
       )
       .toBeGreaterThan(0);
     await expect(
-      lowerPane.locator('[data-agent-seat="observer"]'),
+      lowerPane.locator("[data-agent-seat]").first(),
     ).toHaveAttribute("data-state", "watching");
-    await expect(
-      lowerPane.locator('[data-agent-seat="operator"]'),
-    ).toHaveAttribute("data-state", "ready");
     expect(requests.length).toBeGreaterThan(1);
     expect(
       requests.every(
@@ -329,9 +328,9 @@ test("desktop runs synthetic preview, scopes local vision, stops acquisition, an
     const stopCount = requests.length;
     await page.waitForTimeout(2100);
     expect(requests.length).toBe(stopCount);
-    await expect(lowerPane.getByTestId("agent-desk-agent")).toHaveCount(2);
+    await expect(lowerPane.getByTestId("agent-desk-agent")).toHaveCount(1);
     await expect(
-      lowerPane.locator('[data-agent-seat="observer"]'),
+      lowerPane.locator("[data-agent-seat]").first(),
     ).toHaveAttribute("data-state", "ready");
     await page.evaluate(async () => {
       await window.openAware!.invoke({
@@ -339,7 +338,7 @@ test("desktop runs synthetic preview, scopes local vision, stops acquisition, an
         modelId: "fixture-vision",
       });
     });
-    await expect(lowerPane.getByTestId("agent-desk-outline")).toHaveCount(2);
+    await expect(lowerPane.getByTestId("agent-desk-outline")).toHaveCount(1);
     await expect(lowerPane.getByTestId("agent-desk-agent")).toHaveCount(0);
   } finally {
     await app.close();

@@ -1,5 +1,5 @@
 import { useId } from "react";
-import { Settings2 } from "lucide-react";
+import { Pause, Play, Settings2 } from "lucide-react";
 import "./agent-desk.css";
 
 export type AgentDeskState =
@@ -16,6 +16,11 @@ export type AgentDeskState =
 export interface AgentDeskSeat {
   id: string;
   label: string;
+  roleLabel?: string;
+  selected?: boolean;
+  assignmentCount?: number;
+  monitoring?: boolean;
+  canStart?: boolean;
   /** Real connection readiness, supplied by the parent; selection is insufficient. */
   connected: boolean;
   state: AgentDeskState;
@@ -28,9 +33,12 @@ export interface AgentDeskSeat {
 }
 
 export interface AgentDeskProps {
-  /** The parent supplies one or two seats and owns all connection and role behavior. */
+  /** The parent supplies up to four independent seats and owns connection behavior. */
   seats: readonly AgentDeskSeat[];
   onConfigure?: (seatId: string) => void;
+  onSelect?: (seatId: string) => void;
+  onEdit?: (seatId: string) => void;
+  onToggleWatching?: (seatId: string, monitoring: boolean) => void;
   className?: string;
 }
 
@@ -172,6 +180,9 @@ function Chair({ occupied }: { occupied: boolean }) {
 export function AgentDesk({
   seats,
   onConfigure,
+  onSelect,
+  onEdit,
+  onToggleWatching,
   className = "",
 }: AgentDeskProps) {
   const materialId = useId();
@@ -244,14 +255,27 @@ export function AgentDesk({
               data-agent-seat={seat.id}
               data-state={seat.state}
               data-connected={occupied}
+              data-selected={!!seat.selected}
               role="group"
               aria-label={`${seat.label}, ${stateLabels[seat.state]}`}
             >
               <div className="agent-desk-seat-info">
                 <div className="agent-desk-seat-heading">
-                  <span className="agent-desk-role" title={seat.label}>
-                    {seat.label}
-                  </span>
+                  {onSelect ? (
+                    <button
+                      className="agent-desk-select agent-desk-role"
+                      aria-label={`Select ${seat.label}`}
+                      aria-pressed={!!seat.selected}
+                      title={`${seat.label} · ${seat.roleLabel || "Agent"}`}
+                      onClick={() => onSelect(seat.id)}
+                    >
+                      {seat.label}
+                    </button>
+                  ) : (
+                    <span className="agent-desk-role" title={seat.label}>
+                      {seat.label}
+                    </span>
+                  )}
                   {showState && (
                     <span
                       className="agent-desk-state"
@@ -262,20 +286,41 @@ export function AgentDesk({
                       {stateLabels[seat.state]}
                     </span>
                   )}
-                  {occupied && configure && (
+                </div>
+                <div className="agent-desk-seat-tools">
+                  {seat.roleLabel && (
+                    <span className="agent-desk-role-label">
+                      {seat.roleLabel}
+                    </span>
+                  )}
+                  {onEdit && (
                     <button
                       type="button"
-                      className="agent-desk-configure"
+                      className="text-button"
+                      aria-label={`Edit ${seat.label} and assigned feeds`}
+                      title="Name, role and assigned feeds"
                       disabled={seat.disabled}
-                      onClick={configure}
-                      aria-label={seat.actionLabel || `Configure ${seat.label}`}
-                      title={seat.actionLabel || `Configure ${seat.label}`}
+                      onClick={() => onEdit(seat.id)}
                     >
-                      <Settings2 size={14} />
-                      <span>{seat.actionLabel || "Configure"}</span>
+                      Feeds {seat.assignmentCount || 0}/4{" "}
+                      <Settings2 size={12} />
                     </button>
                   )}
                 </div>
+                {onToggleWatching && (
+                  <button
+                    type="button"
+                    className="agent-desk-watch text-button"
+                    aria-label={`${seat.monitoring ? "Pause" : "Start watching"} ${seat.label}`}
+                    disabled={
+                      seat.disabled || (!seat.monitoring && !seat.canStart)
+                    }
+                    onClick={() => onToggleWatching(seat.id, !!seat.monitoring)}
+                  >
+                    {seat.monitoring ? <Pause size={11} /> : <Play size={11} />}
+                    {seat.monitoring ? "Pause" : "Start"}
+                  </button>
+                )}
                 {occupied && seat.modelName && (
                   <span className="agent-desk-model" title={seat.modelName}>
                     {seat.modelName}
@@ -288,6 +333,19 @@ export function AgentDesk({
                 )}
               </div>
               <Chair occupied={occupied} />
+              {occupied && configure && (
+                <button
+                  type="button"
+                  className="agent-desk-configure"
+                  disabled={seat.disabled}
+                  onClick={configure}
+                  aria-label={`Configure model for ${seat.label}`}
+                  title={seat.actionLabel || `Configure ${seat.label}`}
+                >
+                  <Settings2 size={14} />
+                  <span>Configure</span>
+                </button>
+              )}
               {!occupied &&
                 (configure ? (
                   <button

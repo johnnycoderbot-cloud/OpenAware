@@ -39,3 +39,5 @@ The owner's direct llama.cpp follow-up is tracked in the [0.3.1 implementation l
 The owner's request to find bugs and try to break the app is tracked in the [0.3.2 adversarial audit](adversarial-audit-v0.3.2.md). Its reproduced defects, repairs, independent reviews, final checks and explicit remaining coverage are recorded separately from earlier release evidence.
 
 The owner's labeled source-button and lower agent-desk request is tracked in the [workspace agent desk ledger](workspace-agent-desk.md), including truthful empty/connected seats, source assignments and the final connection scope.
+
+The owner's independent-agent and local/web video request is tracked in the [independent agents and video handoff](independent-agents-video.md), with per-agent assignments/bindings, isolated playback, verification and remaining live platform gates.

@@ -179,20 +179,27 @@ export class CaptureManager {
           p.animation = requestAnimationFrame(animate);
         };
         animate();
-      } else if (source.kind === "monitor" || source.kind === "window") {
+      } else if (
+        ["monitor", "window", "video_file", "video_url", "web_video"].includes(
+          source.kind,
+        )
+      ) {
         p.captureId = crypto.randomUUID();
         p.deviceId = source.deviceId;
         p.demo = document.createElement("canvas");
         p.firstDesktopFrame = new Promise<void>((resolve) => {
           p.firstDesktopFrameReady = resolve;
         });
-        p.firstDesktopFrameTimer = setTimeout(() => {
-          this.desktopFailed(p, {
-            sourceId: p.id,
-            captureId: p.captureId!,
-            message: "The selected source did not provide a preview frame.",
-          });
-        }, 15_000);
+        p.firstDesktopFrameTimer = setTimeout(
+          () => {
+            this.desktopFailed(p, {
+              sourceId: p.id,
+              captureId: p.captureId!,
+              message: "The selected source did not provide a preview frame.",
+            });
+          },
+          source.kind === "web_video" ? 30_000 : 15_000,
+        );
         // Only the fixed, isolated capture owner receives native desktop media.
         // Its token also keeps a late stop or packet from affecting reconnect.
         await this.bridge.startDesktopCapture(source.id, p.captureId);

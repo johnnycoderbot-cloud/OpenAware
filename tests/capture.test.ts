@@ -251,6 +251,11 @@ function harness(motionEnabled = false, kind: Source["kind"] = "camera") {
     onState: () => () => {},
     listDesktopSources: async () => [],
     selectDesktopSource: async () => {},
+    chooseVideoFile: async () => undefined,
+    prepareVideoUrl: async () => {
+      throw new Error("No video selection in fixture");
+    },
+    openVideoSource: async () => {},
     startDesktopCapture: async (sourceId, captureId) => {
       starts.push({ sourceId, captureId });
       emitFrame(captureId);
@@ -491,6 +496,31 @@ test("continuous delivery during delayed motion IPC does not starve frozen AI sa
     h.manager.info(h.source.id)!.previewAt > frames[0].frame.capturedAt,
   );
 });
+
+for (const kind of ["video_file", "video_url", "web_video"] as const)
+  test(`${kind} samples bounded owner packets and rejects frames after Stop`, async (t) => {
+    browser(t, async () => {
+      throw new Error("Video must not acquire dashboard media");
+    });
+    const h = harness(false, kind);
+    t.after(() => h.manager.dispose());
+    await h.manager.start(h.source);
+    assert.ok(h.manager.info(h.source.id)?.canvas);
+    const analysis = h.commands.find(
+      (command) => command.type === "source.frame",
+    );
+    assert.ok(analysis);
+    assert.equal(analysis.frame.width, 1024);
+    assert.equal(analysis.frame.height, 576);
+    const token = h.starts[0]!.captureId;
+    h.manager.stopAll();
+    const count = h.commands.length;
+    h.emitFrame(token, { sequence: 2 });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.equal(h.manager.info(h.source.id), undefined);
+    assert.equal(h.commands.length, count);
+    assert.equal(h.stops.at(-1)?.captureId, token);
+  });
 
 test("isolated desktop previews preserve native geometry and the original decoded frame time", async (t) => {
   browser(t, async () => {

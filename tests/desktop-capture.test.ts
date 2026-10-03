@@ -36,7 +36,24 @@ test("a newly decoded preview retains its timestamp and exact native dimensions"
     validateDesktopCaptureFrame(fixture, 3, 9990, 15_001),
     undefined,
   );
-  assert.equal(validateDesktopCaptureFrame(fixture, 3, 9990, 9999), undefined);
+  assert.equal(validateDesktopCaptureFrame(fixture, 3, 9990, 8999), undefined);
+});
+
+test("native transport preserves small renderer clock skew and rejects excessive future timestamps", () => {
+  const now = 10_100;
+  for (const skew of [1, 1000]) {
+    const ahead = { ...fixture, capturedAt: now + skew };
+    assert.deepEqual(validateDesktopCaptureFrame(ahead, 3, 9990, now), ahead);
+  }
+  assert.equal(
+    validateDesktopCaptureFrame(
+      { ...fixture, capturedAt: now + 1001 },
+      3,
+      9990,
+      now,
+    ),
+    undefined,
+  );
 });
 
 test("capture packets enforce native geometry, aspect ratio and preview bounds", () => {

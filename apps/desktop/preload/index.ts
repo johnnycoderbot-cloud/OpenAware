@@ -34,6 +34,11 @@ const bridge: OpenAwareBridge = {
   listDesktopSources: () => ipcRenderer.invoke("openaware:list-desktop"),
   selectDesktopSource: (id) =>
     ipcRenderer.invoke("openaware:select-desktop", id),
+  chooseVideoFile: () => ipcRenderer.invoke("openaware:choose-video-file"),
+  prepareVideoUrl: (url, mode) =>
+    ipcRenderer.invoke("openaware:prepare-video-url", url, mode),
+  openVideoSource: (sourceId) =>
+    ipcRenderer.invoke("openaware:open-video-source", sourceId),
   startDesktopCapture: (sourceId, captureId) =>
     ipcRenderer.invoke("openaware:start-desktop-capture", sourceId, captureId),
   stopDesktopCapture: (sourceId, captureId) =>

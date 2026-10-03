@@ -147,3 +147,56 @@ test("numeric transport fields refuse nonfinite, unsafe integer and string coerc
       false,
     );
 });
+
+test("agent assignments accept explicit empty scope but reject duplicates and more than four sources", () => {
+  const agentId = randomUUID(),
+    sourceId = randomUUID();
+  for (const sourceIds of [[], [sourceId]])
+    assert.equal(
+      commandSchema.safeParse({
+        type: "agent.update",
+        agentId,
+        patch: { sourceIds },
+      }).success,
+      true,
+    );
+  for (const sourceIds of [
+    [sourceId, sourceId],
+    Array.from({ length: 5 }, () => randomUUID()),
+  ])
+    assert.equal(
+      commandSchema.safeParse({
+        type: "agent.update",
+        agentId,
+        patch: { sourceIds },
+      }).success,
+      false,
+    );
+  assert.equal(
+    commandSchema.safeParse({ type: "agent.update", agentId, patch: {} })
+      .success,
+    false,
+  );
+  assert.equal(
+    commandSchema.safeParse({ type: "agent.add", name: "Agent", role: "admin" })
+      .success,
+    false,
+  );
+});
+
+test("video source commands contain approved opaque refs, never raw file paths or URLs", () => {
+  for (const kind of ["video_file", "video_url", "web_video"])
+    for (const deviceId of [
+      `video:${randomUUID()}`,
+      "https://example.com/video.mp4",
+      "C:/private/movie.mp4",
+      "video:invalid",
+    ])
+      assert.equal(
+        commandSchema.safeParse({
+          type: "source.add",
+          source: { id: randomUUID(), name: "Video", kind, deviceId },
+        }).success,
+        deviceId.startsWith("video:") && deviceId !== "video:invalid",
+      );
+});

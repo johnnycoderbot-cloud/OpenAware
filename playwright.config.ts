@@ -9,6 +9,8 @@ export default defineConfig({
     "visual.spec.ts",
     "native-capture.spec.ts",
     "adversarial.spec.ts",
+    "agents-ui.spec.ts",
+    "video.spec.ts",
   ],
   workers: 1,
   timeout: 45_000,
